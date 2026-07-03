@@ -5,13 +5,38 @@
  *   node dist/server.js            → HTTP (Streamable HTTP + SSE)
  *   node dist/server.js --stdio    → stdio (Claude Desktop, Cursor, ...)
  */
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseEnv } from 'node:util';
 import { buildHttpServer } from './adapters/http.js';
 import { createStdioTransport } from './adapters/stdio.js';
 import { loadConfig } from './config/index.js';
 import { createAppContext } from './core/container.js';
 import { registerShutdownHooks } from './utils/graceful-shutdown.js';
 
+/**
+ * Load the project-root .env (one level above this file, next to
+ * package.json) so MCP hosts can spawn the server from ANY working directory
+ * without passing env flags. Real environment variables always win over the
+ * file, and only the server's own .env is consulted — never the caller's cwd
+ * (an MCP host may spawn us inside an unrelated project).
+ */
+function loadDotEnv(): void {
+  const envPath = join(dirname(fileURLToPath(import.meta.url)), '..', '.env');
+  let content: string;
+  try {
+    content = readFileSync(envPath, 'utf8');
+  } catch {
+    return; // no .env — configuration comes from the environment alone
+  }
+  for (const [key, value] of Object.entries(parseEnv(content) as Record<string, string>)) {
+    process.env[key] ??= value;
+  }
+}
+
 async function main(): Promise<void> {
+  loadDotEnv();
   const config = loadConfig();
   const transport = process.argv.includes('--stdio') ? 'stdio' : config.transport;
 

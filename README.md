@@ -63,12 +63,13 @@ The server boots **without** credentials too: local-state tools keep working and
 ### Claude Code
 
 ```bash
-claude mcp add testflight -- node /absolute/path/to/dist/server.js --stdio \
-  --env ASC_ISSUER_ID=... --env ASC_KEY_ID=... \
-  --env ASC_PRIVATE_KEY_PATH=/absolute/path/AuthKey_XXXX.p8 --env ASC_APP_ID=...
+npm run build
+claude mcp add testflight -- node /absolute/path/to/testflight-mcp-server/dist/server.js --stdio
 ```
 
-(Run `npm run build` first. Or configure `claude_desktop_config.json` → `mcpServers` for Claude Desktop with `"command": "node", "args": ["/abs/path/dist/server.js", "--stdio"]` and an `"env"` block.)
+No env flags needed: at startup the server loads the `.env` sitting in **its own project root** (never the spawn directory — MCP hosts launch servers from arbitrary cwds). Real environment variables always override the file, so `--env` flags or a `claude_desktop_config.json` `"env"` block still win when you want per-host overrides.
+
+Because the spawn cwd is arbitrary, keep `STATE_DB_PATH` and `SCREENSHOTS_DIR` **absolute** in `.env` (the defaults are relative and would resolve against whatever project Claude Code is running in).
 
 In stdio mode all logs go to stderr; stdout is reserved for the protocol.
 
