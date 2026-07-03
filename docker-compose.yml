@@ -1,0 +1,14 @@
+# Local container run:  docker compose up --build
+services:
+  mcp-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      LOG_LEVEL: info
+      AUTH_MODE: none # switch to api-key/jwt before exposing beyond localhost
+      # API_KEYS: "dev-key:*"
+      # ALLOWED_ORIGINS: "https://app.example.com"
+    restart: unless-stopped

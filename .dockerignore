@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+.git
+.env
+.env.*
+.aws-sam
+*.log
+README.md
+docker-compose.yml
+template.yaml

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.local
+.env.*.local
+.aws-sam/
+.DS_Store
+
+# TestFlight MCP server local state
+data/
+screenshots/
+*.p8

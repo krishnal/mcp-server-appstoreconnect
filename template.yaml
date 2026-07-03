@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  MCP server (Model Context Protocol) on AWS Lambda + API Gateway HTTP API.
+  Deploy:  sam build && sam deploy --guided
+  The same codebase runs on Docker/K8s via src/server.ts.
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: nodejs24.x
+    Architectures: [arm64]
+
+Resources:
+  McpServerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/lambda-handler.handler
+      Description: MCP server (stateless Streamable HTTP)
+      Environment:
+        Variables:
+          NODE_ENV: production
+          STATELESS: 'true'
+          LOG_LEVEL: info
+          # Lambda concurrency management replaces in-process rate limiting.
+          RATE_LIMIT_ENABLED: 'false'
+          AUTH_MODE: none # switch to api-key/jwt for anything non-experimental
+          # API_KEYS: 'replace-me:*'
+      Events:
+        McpApi:
+          Type: HttpApi
+          Properties:
+            Path: /mcp
+            Method: POST
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: node24
+        Format: esm
+        OutExtension: ['.js=.mjs']
+        Sourcemap: true
+        EntryPoints: [src/lambda-handler.ts]
+        Banner: ["js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"]
+
+Outputs:
+  McpEndpoint:
+    Description: MCP endpoint URL
+    Value: !Sub 'https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/mcp'

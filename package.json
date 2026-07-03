@@ -1,0 +1,45 @@
+{
+  "name": "testflight-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for TestFlight feedback — read, analyze, prioritize, and act on App Store Connect beta feedback from Claude Code or any MCP host.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "dev:stdio": "tsx src/server.ts --stdio",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "start:stdio": "node dist/server.js --stdio",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "build:lambda": "node scripts/build-lambda.mjs",
+    "docker:build": "docker build -f docker/Dockerfile -t testflight-mcp-server ."
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
+    "@fastify/cors": "^11.2.0",
+    "@fastify/rate-limit": "^11.1.0",
+    "@opentelemetry/api": "^1.9.0",
+    "fastify": "^5.9.0",
+    "jose": "^6.2.3",
+    "pino": "^9.13.0",
+    "prom-client": "^15.1.3",
+    "undici": "^7.16.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.152",
+    "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "esbuild": "^0.25.0",
+    "pino-pretty": "^13.1.1",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
