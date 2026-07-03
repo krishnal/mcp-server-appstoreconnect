@@ -1,284 +1,219 @@
-# MCP Server Boilerplate
+# TestFlight MCP Server
 
-Production-ready [Model Context Protocol](https://modelcontextprotocol.io) server boilerplate for Node.js + TypeScript. One transport-agnostic core; three deployment targets (stdio, HTTP/SSE, AWS Lambda); capabilities that plug in with a single registration line.
+A production-ready [Model Context Protocol](https://modelcontextprotocol.io) server that connects Claude Code (or any MCP host) to your **TestFlight beta feedback** in App Store Connect — so tester feedback flows straight into an AI-assisted workflow: *fetch → analyze screenshots → prioritize → generate TODOs → file issues → fix the code* without leaving the IDE.
 
-- **Protocol**: MCP spec revision `2025-06-18` (JSON-RPC 2.0), with version negotiation for `2025-03-26` and `2024-11-05`
-- **Stack**: Node.js 24 (LTS), TypeScript (strict, ESM), Fastify, Zod 4, Pino, prom-client, jose, undici
-- **Ops**: correlation-id logging, Prometheus metrics, OpenTelemetry-ready spans, health checks, rate limiting, request timeouts, cancellation, graceful shutdown
-- **Security**: pluggable auth (API key / JWT / none), per-capability scopes, Origin validation, SSRF- and path-traversal-hardened examples, non-root Docker image
+Built on [krishnal/mcp-server-boilerplate](https://github.com/krishnal/mcp-server-boilerplate): transport-agnostic MCP core (spec `2025-06-18`), stdio/HTTP/Lambda adapters, Zod-validated config, Pino/Prometheus/OTel observability, pluggable auth.
 
-## Architecture
+- **Upstream API**: the official, stable **App Store Connect API 4.0** beta-feedback endpoints (`betaFeedbackScreenshotSubmissions`, `betaFeedbackCrashSubmissions`, crash logs) — no private/undocumented APIs
+- **Local state**: SQLite via Node's built-in `node:sqlite` — zero native dependencies, works everywhere including Lambda bundles
+- **AI analysis**: dual-mode — the MCP host model (Claude) analyzes screenshots by default with **zero extra configuration**, or set `ANTHROPIC_API_KEY` and the server analyzes autonomously
+- **Integrations**: file issues into GitHub, Jira, or Linear with full context, idempotently
 
-```mermaid
-flowchart LR
-    subgraph Transports["Adapters (thin, swappable)"]
-        STDIO["stdio<br/>(Claude Desktop, Cursor)"]
-        HTTP["HTTP + SSE<br/>(Fastify, Streamable HTTP)"]
-        LAMBDA["AWS Lambda<br/>(API GW / Function URL)"]
-    end
+## Tools
 
-    subgraph Core["Transport-agnostic core"]
-        DISPATCH["Dispatcher<br/>validation · lifecycle · timeouts<br/>cancellation · metrics · tracing"]
-        METHODS["Method Registry<br/>initialize · ping · tools/* ·<br/>resources/* · prompts/* · logging/*"]
-        SESSIONS["Session Store<br/>state · auth · subscriptions"]
-    end
+| Tool | What it does |
+|---|---|
+| `list_apps` | Resolve App Store Connect app ids (feeds `ASC_APP_ID`) |
+| `list_feedback` | List screenshot/crash feedback with filters (build, version, device, OS, platform, date range, processed state) |
+| `get_feedback` | Full detail: comment, device/build context, screenshots, analysis, TODO, linked issues, processed state |
+| `get_crash_log` | Crash log text for a crash submission |
+| `download_screenshot` | Download screenshots to `./screenshots/<id>/` (signed URLs expire — expiry is handled) and embed them for immediate visual analysis |
+| `list_unprocessed` | The triage queue — everything not yet marked processed |
+| `mark_processed` / `mark_unprocessed` | Local processed state, with an optional resolution note |
+| `analyze_feedback` | Structured analysis (screen, problem, component, severity, confidence, fix approach) — autonomous with `ANTHROPIC_API_KEY`, otherwise hands evidence to the host model |
+| `save_analysis` | Persist a host-performed analysis (the other half of the dual mode) |
+| `generate_todo` | Actionable engineering checklist (reproduce → root-cause → fix → test → verify → close) |
+| `group_duplicates` | Cluster similar feedback (lexical similarity + build/device/screen signals) |
+| `prioritize_feedback` | Rank by severity × duplicate frequency × recency, with human-readable reasons |
+| `create_issue` | File a GitHub/Jira/Linear issue with comment, context, analysis, TODO, screenshot paths — idempotent per feedback+provider |
 
-    subgraph Capabilities["Capabilities (business logic)"]
-        REG["Capability Registry"]
-        TOOLS["tools/&ast;.ts"]
-        RES["resources/&ast;.ts"]
-        PROMPTS["prompts/&ast;.ts"]
-    end
-
-    AUTH["Auth Providers<br/>none · api-key · jwt"]
-
-    STDIO --> DISPATCH
-    HTTP --> DISPATCH
-    LAMBDA --> DISPATCH
-    HTTP -.-> AUTH
-    LAMBDA -.-> AUTH
-    DISPATCH --> METHODS
-    DISPATCH --> SESSIONS
-    METHODS --> REG
-    REG --> TOOLS
-    REG --> RES
-    REG --> PROMPTS
-```
-
-**Layering rules** (what keeps this maintainable):
-
-1. **Adapters** translate a medium (stdin lines, HTTP requests, Lambda events) into `dispatcher.handleMessage(message, session)` calls. They contain zero protocol logic.
-2. The **dispatcher** owns every cross-cutting concern: JSON-RPC validation, the initialize lifecycle gate, Zod params validation, timeouts, `notifications/cancelled`, metrics, tracing, and error mapping (internals are never leaked to clients).
-3. **Method handlers** implement MCP semantics declaratively (`MethodDefinition` = name + Zod schema + handler). A spec change is a new registration, not a refactor.
-4. **Capabilities** are pure business logic: `(typed input, context) → result`. They never see JSON-RPC, HTTP, or Lambda.
+Plus a `feedback://{id}` **resource template** (attach feedback to conversations) and a `triage_feedback` **prompt** (guided end-to-end triage workflow).
 
 ## Quickstart
 
-Requires **Node.js ≥ 24** (current LTS). With nvm: `nvm use` (picks up `.nvmrc`).
+Requires **Node.js ≥ 24** (`nvm use` picks up `.nvmrc`; `node:sqlite` ships with Node 24).
 
 ```bash
 npm install
-cp .env.example .env       # optional — every variable has a safe default
+cp .env.example .env    # fill in the ASC_* credentials (below)
 
-# development (auto-reload)
-npm run dev                # HTTP transport on http://127.0.0.1:3000
-npm run dev:stdio          # stdio transport (for MCP hosts)
-
-# production
-npm run build              # compile to dist/
-npm start                  # HTTP transport
-npm run start:stdio        # stdio transport
-
-npm test                   # 69 tests: unit + integration + protocol compliance
+npm run dev:stdio       # stdio transport (for MCP hosts) — or `npm run dev` for HTTP
+npm test                # 107 tests
 ```
 
-All scripts:
+### Credentials (App Store Connect API key)
 
-| Script | Purpose |
-|---|---|
-| `npm run dev` / `dev:stdio` | run from source with auto-reload (tsx) |
-| `npm run build` → `npm start` / `start:stdio` | compile & run production build |
-| `npm test` / `test:watch` / `coverage` | Vitest suite / watch mode / v8 coverage |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm run build:lambda` | bundle `dist/lambda/index.mjs` for AWS Lambda |
-| `npm run docker:build` | build the production Docker image |
-
-Smoke-test the HTTP transport:
+1. App Store Connect → **Users and Access → Integrations → App Store Connect API → Team Keys → “+”**.
+2. Role: **Developer** (or App Manager). Beta-feedback endpoints require Admin, App Manager, or Developer.
+3. Note the **Issuer ID** (top of the page) and the key's **Key ID**, and download the **`.p8` file** — Apple lets you download it exactly once.
 
 ```bash
-curl -s -D - http://127.0.0.1:3000/mcp \
-  -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
-# → result + Mcp-Session-Id response header; pass that header on subsequent requests
+# .env
+ASC_ISSUER_ID=69a6de70-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+ASC_KEY_ID=ABC123DEFG
+ASC_PRIVATE_KEY_PATH=./AuthKey_ABC123DEFG.p8      # or:
+# ASC_PRIVATE_KEY_BASE64=$(base64 -i AuthKey_ABC123DEFG.p8)
+ASC_APP_ID=1234567890                              # optional; find via list_apps
 ```
 
-### Claude Desktop / Cursor (stdio)
+**Key handling:** the `.p8` is read lazily, never logged (Pino redaction covers key material), and never leaves the process — screenshots are downloaded from Apple's pre-signed CDN URLs *without* attaching your bearer token. `*.p8`, `data/`, and `screenshots/` are gitignored. JWTs are ES256, minted for 15 minutes (Apple's cap is 20), cached, refreshed proactively, and re-minted once on a 401.
 
-```jsonc
-// claude_desktop_config.json → "mcpServers"
-{
-  "my-server": {
-    "command": "node",
-    "args": ["/absolute/path/to/dist/server.js", "--stdio"]
-  }
-}
+The server boots **without** credentials too: local-state tools keep working and ASC-backed tools return instructions instead of failing cryptically.
+
+### Claude Code
+
+```bash
+claude mcp add testflight -- node /absolute/path/to/dist/server.js --stdio \
+  --env ASC_ISSUER_ID=... --env ASC_KEY_ID=... \
+  --env ASC_PRIVATE_KEY_PATH=/absolute/path/AuthKey_XXXX.p8 --env ASC_APP_ID=...
 ```
 
-Run `npm run build` first. In stdio mode all logs go to stderr; stdout is reserved for the protocol.
+(Run `npm run build` first. Or configure `claude_desktop_config.json` → `mcpServers` for Claude Desktop with `"command": "node", "args": ["/abs/path/dist/server.js", "--stdio"]` and an `"env"` block.)
 
-## Adding capabilities
+In stdio mode all logs go to stderr; stdout is reserved for the protocol.
 
-### A new tool (2 steps)
+## Example Claude workflows
 
-**1.** Create `src/capabilities/tools/greet.ts`:
+**Morning triage** (or just invoke the `triage_feedback` prompt):
 
-```ts
-import { z } from 'zod';
-import { defineTool } from '../../core/registry/define.js';
+> *"Check my TestFlight feedback. Group duplicates, prioritize what's pending, then walk me through the top 3 with screenshots."*
 
-export const greetTool = defineTool({
-  name: 'greet',
-  description: 'Greets a person by name.',
-  inputSchema: z.object({
-    name: z.string().describe('Who to greet'),
-  }),
-  // optional: outputSchema, annotations, requiredScopes: ['tools:greet']
-  handler: async ({ name }, ctx) => {
-    ctx.logger.info({ name }, 'greeting');           // structured server log
-    await ctx.reportProgress(1, 1);                  // MCP progress (if requested)
-    return { content: [{ type: 'text', text: `Hello, ${name}!` }] };
-  },
-});
+Claude calls `list_unprocessed` → `group_duplicates` → `prioritize_feedback`, then `analyze_feedback` per item — the screenshots come back as images Claude inspects directly, persisting its findings via `save_analysis`.
+
+**From feedback to fix:**
+
+> *"Analyze feedback fb-123, find the code responsible and fix it."*
+
+`analyze_feedback` returns the screenshot + device context; Claude identifies the affected screen/component, greps your codebase, makes the change, then `generate_todo` tracks the verification steps and `mark_processed` closes the loop.
+
+**From feedback to ticket:**
+
+> *"File the checkout-overlap feedback as a GitHub issue and mark it processed with the issue number."*
+
+`create_issue` bundles the comment, build/device context, analysis, TODO checklist, and screenshot paths — and it's idempotent, so retries return the existing issue instead of filing duplicates.
+
+**Crash triage:**
+
+> *"Any new crashes this week? Pull the crash logs and tell me what's crashing."*
+
+`list_feedback (kind: crash, since: ...)` → `get_crash_log` → Claude reads the stack.
+
+## Architecture
+
+```
+src/
+├── asc/               # App Store Connect: ES256 token provider, typed API client
+├── storage/           # node:sqlite FeedbackStore (cache, state, idempotency)
+├── analysis/          # analyzer (Claude vision), similarity, prioritize, todo
+├── issues/            # IssueProvider interface + github/jira/linear
+├── services/          # composition of the above, injected as ctx.services
+├── capabilities/      # MCP tools/resources/prompts (thin: parse → services → format)
+├── core/              # boilerplate protocol engine (dispatcher, registry, sessions)
+├── adapters/          # stdio.ts · http.ts · lambda.ts
+└── config/            # Zod-validated env config
 ```
 
-**2.** Register it in `src/capabilities/index.ts`:
+Layering: capabilities never speak HTTP or SQL; `asc/` never touches SQLite; `analysis/` and `issues/` depend only on domain types. Everything reaches handlers through one typed `ctx.services` bag built in the composition root — tests inject fakes there (see `tests/helpers/fixtures.ts`).
 
-```ts
-registry.registerTool(greetTool);
-```
+**Reliability & error handling:** App Store Connect 429s are retried honoring `Retry-After`; 401s trigger one token refresh+retry; expired screenshot URLs are re-fetched automatically; every upstream failure surfaces as an `isError` tool result with Apple's actual error detail so the calling LLM can self-correct. Handlers honor the request's `AbortSignal` (client cancellation and server timeouts).
 
-That's it. JSON Schema generation, input validation, `tools/list`, scope enforcement, metrics, tracing, timeout and cancellation handling are all automatic. Handlers get a `CapabilityContext` with `logger`, `config`, `auth`, `session`, `signal` (honor it in long work), `reportProgress()` and `mcpLog()`.
+**Idempotency:** `mark_processed`/`save_analysis`/`generate_todo` are upserts; `create_issue` files at most one issue per (feedback, provider) and returns the existing link on retries; re-listing feedback refreshes the cache without clobbering local state.
 
-**Error convention**: throw for protocol errors (rare — usually `JsonRpcError.resourceNotFound(...)`), but return `{ isError: true, content: [...] }` for business failures so the calling LLM can read the message and self-correct. Uncaught exceptions are converted to `isError` results automatically and never leak stack traces.
+### The dual-mode AI analysis
 
-### A new resource
+Apple gives you the screenshot; someone needs vision to read it. Two ways, same stored result:
 
-```ts
-// fixed URI
-defineResource({ uri: 'config://app', name: 'app-config', handler: ... })
-// or a template — {var} matches one segment, {+var} matches across "/"
-defineResourceTemplate({ uriTemplate: 'db://{table}/{id}', name: 'record', handler: ... })
-```
+- **Host-delegated (default, zero config):** `analyze_feedback` returns the screenshot(s) as MCP image blocks + device context + instructions; the host model (Claude) analyzes and persists via `save_analysis`. Your API bill: nothing extra.
+- **Autonomous (`ANTHROPIC_API_KEY` set):** the server calls Claude (`claude-opus-4-8` by default) with vision + structured outputs and stores the validated analysis itself. Useful for headless/batch use.
 
-Subscribable resources push updates: call `appContext.notifyResourceUpdated(uri)` from your business logic and every subscribed client receives `notifications/resources/updated`.
-
-### A new prompt
-
-```ts
-definePrompt({
-  name: 'summarize',
-  argumentsSchema: z.object({ text: z.string().describe('Text to summarize') }),
-  handler: ({ text }) => ({ messages: [{ role: 'user', content: { type: 'text', text: `Summarize:\n${text}` } }] }),
-})
-```
-
-Zod optionality/descriptions project automatically into the spec's `arguments` list.
-
-### A new protocol method or transport
-
-- **Method**: write a `MethodDefinition` and register it via `createAppContext({ registerMethods })` or in `src/core/methods/index.ts`.
-- **Transport**: implement ~100 lines that (1) authenticate → `AuthContext`, (2) obtain a `Session`, (3) call `dispatcher.handleMessage`, (4) deliver responses & wire `session.setSender` for push. See `src/adapters/stdio.ts` for the minimal example.
-
-## Authentication & authorization
-
-| Mode | Config | Behavior |
-|---|---|---|
-| `none` (default) | — | anonymous principal with wildcard scope; for local/trusted use |
-| `api-key` | `API_KEYS=key:scopeA\|scopeB,key2` | `x-api-key` header or bearer token; constant-time comparison; per-key scopes |
-| `jwt` | `JWT_SECRET` or `JWT_JWKS_URL` (+ optional `JWT_ISSUER`, `JWT_AUDIENCE`) | `Authorization: Bearer`; scopes from `scope`/`scopes` claims |
-
-Authentication runs at the transport edge (HTTP 401 before any JSON-RPC processing). Authorization is per-capability: declare `requiredScopes: ['tools:fetch']` on any tool/resource/prompt and the dispatcher answers `-32003` for under-scoped principals. Sessions are bound to the authenticating principal.
-
-To add a scheme (OAuth2 introspection, mTLS, ...): implement the 2-method `AuthProvider` interface in `src/auth/providers/`, add a case in `createAuthProvider` — no core or transport changes.
+Downstream tools (`prioritize_feedback`, `generate_todo`, `create_issue`) read the same schema either way (`src/analysis/schema.ts`).
 
 ## Deployment
 
-### Docker
+### Local (stdio) — recommended for Claude Code/Desktop
 
 ```bash
-docker build -f docker/Dockerfile -t mcp-server .
-docker run --rm -p 3000:3000 -e AUTH_MODE=api-key -e API_KEYS=prod-key:* mcp-server
-# or: docker compose up --build
+npm run build && npm run start:stdio
 ```
 
-Multi-stage build, production deps only, non-root user, tini as PID 1 (so SIGTERM → graceful shutdown works under K8s/ECS), `HEALTHCHECK` on `/healthz`. Point liveness at `/healthz`, readiness at `/readyz`.
-
-### AWS Lambda (SAM)
+### Docker (HTTP)
 
 ```bash
-sam build && sam deploy --guided     # uses template.yaml (esbuild, nodejs24.x, arm64)
+docker build -f docker/Dockerfile -t testflight-mcp-server .
+docker run --rm -p 3000:3000 \
+  -e ASC_ISSUER_ID=... -e ASC_KEY_ID=... -e ASC_PRIVATE_KEY_BASE64="$(base64 -i AuthKey.p8)" \
+  -e ASC_APP_ID=... -e HTTP_HOST=0.0.0.0 \
+  -e AUTH_MODE=api-key -e API_KEYS=your-key:* \
+  -v testflight-data:/app/data -v testflight-shots:/app/screenshots \
+  testflight-mcp-server
 ```
 
-Or bundle yourself (`npm run build:lambda` → `dist/lambda/index.mjs`, single file) and deploy with any tool — the handler is `src/lambda-handler.handler`, compatible with API Gateway HTTP APIs (payload v2) and Function URLs.
+Mount volumes for `/app/data` and `/app/screenshots` so state survives restarts. Health checks: `/healthz` (liveness), `/readyz` (readiness); Prometheus metrics on `/metrics`.
 
-Lambda runs in **stateless mode** (forced): each request gets an ephemeral, pre-initialized session. Trade-offs, per MCP's design: no SSE stream, so no subscriptions/server-push — use the container deployment when you need those. Prefer API Gateway throttling + WAF over in-process rate limiting there.
+### AWS Lambda
 
-### Kubernetes/ECS notes
+```bash
+sam build && sam deploy --guided      # template.yaml (nodejs24.x, arm64)
+# or: npm run build:lambda → dist/lambda/index.mjs, deploy with any tool
+```
 
-Session state is in-memory by default, so use session affinity — or implement the 5-method `SessionStore` interface (`src/core/session.ts`) over Redis/DynamoDB and inject it via `createAppContext({ sessionStore })`.
+Use `ASC_PRIVATE_KEY_BASE64` (no filesystem needed) and set `STATE_DB_PATH=/tmp/testflight.db`, `SCREENSHOTS_DIR=/tmp/screenshots`. Because `node:sqlite` is built into the runtime, the single-file bundle just works — **but `/tmp` is per-container and ephemeral**, so processed flags and analyses reset between cold starts. For durable state on Lambda, mount EFS for the DB path; for the full feature set (sessions, subscriptions, persistent state) prefer the container deployment. Lambda runs stateless (ephemeral sessions, no server-push).
 
-## Configuration
+## Extending
 
-All configuration is environment variables, validated by Zod at startup (invalid config = refusal to boot with a readable report). See **`.env.example`** for the full annotated reference. Highlights:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `MCP_TRANSPORT` | `http` | `http` or `stdio` (CLI `--stdio` overrides) |
-| `HTTP_HOST` / `HTTP_PORT` | `127.0.0.1` / `3000` | bind address |
-| `ALLOWED_ORIGINS` | *(empty)* | CORS + DNS-rebinding allowlist; empty = localhost-only origins |
-| `AUTH_MODE` | `none` | `none` \| `api-key` \| `jwt` |
-| `STATELESS` | `false` | ephemeral sessions (Lambda) |
-| `REQUEST_TIMEOUT_MS` | `30000` | per-request deadline enforced by the dispatcher |
-| `RATE_LIMIT_*` | enabled, 120/min | HTTP rate limiting |
-| `SESSION_TTL_MS` | `1800000` | idle session eviction |
-
-## Observability
-
-- **Logs**: Pino JSON to stdout (stderr for stdio). Every line carries the request-scoped correlation id (`x-request-id` header, Lambda request id, or generated), session id and method via AsyncLocalStorage — no manual threading. Credentials are redacted.
-- **Metrics**: `GET /metrics` (Prometheus). `mcp_rpc_requests_total{method,status}`, `mcp_rpc_request_duration_seconds`, `mcp_tool_calls_total{tool,outcome}`, `mcp_active_sessions`, plus Node.js default metrics.
-- **Tracing**: spans (`mcp.rpc <method>`, `mcp.tool.call`) are emitted through `@opentelemetry/api`, which is a no-op until you register an SDK:
+**A new tool** (the boilerplate pattern still applies — schema + handler, register, done):
 
 ```ts
-// e.g. instrumentation.ts, loaded before the server via --import
-import { NodeSDK } from '@opentelemetry/sdk-node';
-new NodeSDK({ /* exporter config */ }).start();
+// src/capabilities/tools/my-tool.ts
+export const myTool = defineTool({
+  name: 'my_tool',
+  description: '...',
+  inputSchema: z.object({ feedbackId: z.string() }),
+  handler: async ({ feedbackId }, ctx) => {
+    const stored = ctx.services.store.getFeedback(feedbackId); // full services bag
+    return { content: [{ type: 'text', text: '...' }] };
+  },
+});
+// then registry.registerTool(myTool) in src/capabilities/index.ts
 ```
 
-- **Health**: `/healthz` (liveness), `/readyz` (readiness — extend with real dependency checks).
+**A new issue provider:** implement the 1-method `IssueProvider` interface (`src/issues/types.ts`), add a config block in `src/config/index.ts`, register it in `createIssueProviders` (`src/issues/index.ts`). Idempotency comes for free from the `issues` table.
+
+**Smarter duplicate detection:** swap the lexical scorer in `src/analysis/similarity.ts` for embeddings — `clusterFeedback`'s contract (items in, groups out) doesn't change.
+
+**Polling / notifications:** the boilerplate supports subscribable resources — poll `listFeedback` on an interval from your business logic and call `appContext.notifyResourceUpdated(...)` to push `notifications/resources/updated` to subscribed clients (HTTP transport).
+
+**Different storage:** `FeedbackStore` (`src/storage/feedback-store.ts`) is the entire storage surface — reimplement it over Postgres/DynamoDB/libsql and swap it in `createServices`.
 
 ## Testing
 
 ```bash
-npm test             # vitest run
-npm run coverage     # v8 coverage
+npm test              # 107 tests: unit + protocol-level + transport integration
+npm run coverage
 npm run typecheck
 ```
 
-`tests/helpers/mcp-test-client.ts` is a protocol-compliance harness: it drives the real dispatcher exactly like a transport does (`initialize()` handshake, `request`, `requestExpectError`, `notify`). Use it to spec-test every capability you add without booting a server. Integration tests exercise the full Fastify transport via `inject` (no sockets), the stdio transport via in-memory streams, and the Lambda adapter via synthetic API Gateway events.
+Capability tests drive the **real dispatcher** through `tests/helpers/mcp-test-client.ts` with fake ASC/issue services injected via the composition root (`tests/helpers/fixtures.ts`) — every tool is spec-tested without network. The ASC client and issue providers are tested against `undici` `MockAgent` upstreams (pagination, 401 refresh, 429 retry, error mapping). Token minting is tested with real ES256 keys and a fake clock.
 
-## Project structure
+## Configuration reference
 
-```
-src/
-├── core/                    # transport-agnostic protocol engine
-│   ├── jsonrpc/             #   JSON-RPC 2.0 types, errors, parsing
-│   ├── protocol/            #   MCP wire types + version negotiation
-│   ├── methods/             #   declarative method registry (initialize, tools/*, ...)
-│   ├── registry/            #   capability registry + defineTool/Resource/Prompt
-│   ├── dispatcher.ts        #   validation · lifecycle · timeouts · cancellation
-│   ├── session.ts           #   sessions + pluggable SessionStore
-│   ├── subscriptions.ts     #   resource subscription fan-out
-│   └── container.ts         #   composition root (DI)
-├── capabilities/            # YOUR business logic (examples included)
-│   ├── tools/               #   calculator (sync), fetch-url (async, scoped, SSRF-guarded)
-│   ├── resources/           #   system-info (subscribable), docs (template, sandboxed)
-│   └── prompts/             #   code-review
-├── adapters/                # stdio.ts · http.ts · lambda.ts
-├── auth/                    # AuthProvider interface + none/api-key/jwt
-├── config/                  # Zod-validated env config
-├── observability/           # logger · metrics · tracing · request-context
-├── utils/                   # graceful shutdown
-├── server.ts                # HTTP/stdio entry point
-└── lambda-handler.ts        # Lambda entry point
-tests/                       # unit + integration + protocol helpers
-docker/Dockerfile            # multi-stage, non-root, healthcheck
-template.yaml                # AWS SAM (Lambda + API Gateway)
-```
+See **`.env.example`** for the full annotated list. Highlights:
 
-## Design decisions worth knowing
+| Variable | Default | Purpose |
+|---|---|---|
+| `ASC_ISSUER_ID` / `ASC_KEY_ID` | — | App Store Connect API key identity |
+| `ASC_PRIVATE_KEY_PATH` \| `ASC_PRIVATE_KEY_BASE64` | — | the `.p8` key (exactly one) |
+| `ASC_APP_ID` | — | default app for feedback tools |
+| `STATE_DB_PATH` | `./data/testflight.db` | SQLite state (`:memory:` ok; `/tmp/...` on Lambda) |
+| `SCREENSHOTS_DIR` | `./screenshots` | downloaded screenshot storage |
+| `ANTHROPIC_API_KEY` | — | enables autonomous analysis (optional) |
+| `ANTHROPIC_MODEL` | `claude-opus-4-8` | model for autonomous analysis |
+| `GITHUB_TOKEN`+`GITHUB_REPO`, `JIRA_*`, `LINEAR_*` | — | issue providers (any subset) |
+| `MCP_TRANSPORT` | `http` | `http` or `stdio` (CLI `--stdio` overrides) |
+| `AUTH_MODE` | `none` | `none` \| `api-key` \| `jwt` (HTTP edge) |
 
-- **Hand-rolled protocol core** (vs. wrapping an SDK): the dispatcher/method-registry split keeps the core deployable anywhere a JSON message can arrive, makes spec revisions an additive change, and keeps Lambda cold starts lean. Protocol types live in exactly one place (`src/core/protocol/`).
-- **Composition-root DI** (vs. tsyringe): no decorators/`reflect-metadata` in ESM, the object graph is explicit, and tests override any node of it.
-- **Tool errors are results** (`isError: true`), protocol errors are JSON-RPC errors — per spec, so LLMs can observe tool failures.
-- **JSON-RPC batching is rejected** (removed in spec `2025-06-18`).
-- **Sessions**: HTTP uses `Mcp-Session-Id` + TTL eviction; expired/unknown ids return 404 so well-behaved clients silently re-initialize.
+Partial provider/credential configuration fails at boot with a readable error — absence degrades gracefully, misconfiguration never does.
+
+## License
+
+MIT

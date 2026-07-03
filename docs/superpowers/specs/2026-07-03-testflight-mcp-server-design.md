@@ -107,8 +107,8 @@ context, stored analysis, TODO checklist, and screenshot paths.
 
 ## MCP surface
 
-Tools (all with Zod schemas, `isError` business failures, scoped `tf:read` / `tf:write` /
-`tf:issues` when auth enabled):
+Tools (all with Zod schemas, `isError` business failures; per-tool scopes deliberately omitted
+in v1 for stdio DX — the boilerplate's `requiredScopes` hook is the extension point):
 `list_apps`, `list_feedback`, `get_feedback`, `get_crash_log`, `download_screenshot`,
 `mark_processed`, `mark_unprocessed`, `list_unprocessed`, `analyze_feedback`, `save_analysis`,
 `generate_todo`, `prioritize_feedback`, `group_duplicates`, `create_issue`.
