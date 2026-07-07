@@ -1,0 +1,59 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.krishnal/mcp-server-appstoreconnect",
+  "description": "TestFlight feedback from App Store Connect: read, analyze screenshots, prioritize, generate TODOs, and file issues — without leaving your MCP host.",
+  "repository": {
+    "url": "https://github.com/krishnal/mcp-server-appstoreconnect",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "mcp-server-appstoreconnect",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "ASC_ISSUER_ID",
+          "description": "App Store Connect API issuer ID (Users and Access → Integrations)",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "ASC_KEY_ID",
+          "description": "App Store Connect API key ID",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "ASC_PRIVATE_KEY_BASE64",
+          "description": "Base64-encoded .p8 private key (alternative: ASC_PRIVATE_KEY_PATH)",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "ASC_PRIVATE_KEY_PATH",
+          "description": "Absolute path to the .p8 private key file (alternative: ASC_PRIVATE_KEY_BASE64)",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "ASC_APP_ID",
+          "description": "Default App Store Connect app id (discover with the list_apps tool)",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "description": "Optional: enables autonomous screenshot analysis via the Claude API (without it, the host model analyzes)",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

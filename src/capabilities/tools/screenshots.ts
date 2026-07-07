@@ -18,7 +18,8 @@ export const downloadScreenshotTool = defineTool({
   name: 'download_screenshot',
   title: 'Download screenshots',
   description:
-    'Downloads all screenshots of a feedback item into SCREENSHOTS_DIR (default ./screenshots/<feedbackId>/) ' +
+    'Downloads all screenshots of a feedback item into SCREENSHOTS_DIR ' +
+    '(default ~/.mcp-server-appstoreconnect/screenshots/<feedbackId>/) ' +
     'and returns the local file paths. By default also embeds the images so you can analyze them directly. ' +
     'Expired signed URLs are refreshed automatically.',
   inputSchema: z.object({

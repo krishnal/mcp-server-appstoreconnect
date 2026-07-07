@@ -13,9 +13,18 @@
  * actionable configuration message. Partial ASC configuration is a hard error
  * (misconfiguration should fail loudly, absence should degrade gracefully).
  */
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 
 const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] as const;
+
+/**
+ * Default state location. A home-directory default (not ./data) because MCP
+ * hosts spawn this server inside arbitrary project directories — a relative
+ * default would scatter data/ folders across the user's repos.
+ */
+const DEFAULT_DATA_DIR = join(homedir(), '.mcp-server-appstoreconnect');
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -86,9 +95,9 @@ const envSchema = z.object({
 
   // --- Local state ----------------------------------------------------------
   /** SQLite database path (':memory:' supported; on Lambda use /tmp). */
-  STATE_DB_PATH: z.string().default('./data/testflight.db'),
+  STATE_DB_PATH: z.string().default(join(DEFAULT_DATA_DIR, 'testflight.db')),
   /** Directory screenshots are downloaded into. */
-  SCREENSHOTS_DIR: z.string().default('./screenshots'),
+  SCREENSHOTS_DIR: z.string().default(join(DEFAULT_DATA_DIR, 'screenshots')),
 
   // --- AI analysis (optional — host-delegated mode needs no key) ------------
   ANTHROPIC_API_KEY: z.string().optional(),

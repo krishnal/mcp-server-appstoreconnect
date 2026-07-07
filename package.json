@@ -4,6 +4,34 @@
   "description": "MCP server for TestFlight feedback — read, analyze, prioritize, and act on App Store Connect beta feedback from Claude Code or any MCP host.",
   "type": "module",
   "license": "Apache-2.0",
+  "bin": {
+    "mcp-server-appstoreconnect": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "!dist/lambda",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    ".env.example"
+  ],
+  "mcpName": "io.github.krishnal/mcp-server-appstoreconnect",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/krishnal/mcp-server-appstoreconnect.git"
+  },
+  "homepage": "https://github.com/krishnal/mcp-server-appstoreconnect#readme",
+  "bugs": "https://github.com/krishnal/mcp-server-appstoreconnect/issues",
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "mcp-server",
+    "testflight",
+    "app-store-connect",
+    "apple",
+    "beta-feedback",
+    "claude"
+  ],
   "engines": {
     "node": ">=24"
   },
@@ -14,6 +42,7 @@
     "start": "node dist/server.js",
     "start:stdio": "node dist/server.js --stdio",
     "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",

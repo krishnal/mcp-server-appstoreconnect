@@ -17,7 +17,7 @@ Built on [krishnal/mcp-server-boilerplate](https://github.com/krishnal/mcp-serve
 | `list_feedback` | List screenshot/crash feedback with filters (build, version, device, OS, platform, date range, processed state) |
 | `get_feedback` | Full detail: comment, device/build context, screenshots, analysis, TODO, linked issues, processed state |
 | `get_crash_log` | Crash log text for a crash submission |
-| `download_screenshot` | Download screenshots to `./screenshots/<id>/` (signed URLs expire — expiry is handled) and embed them for immediate visual analysis |
+| `download_screenshot` | Download screenshots to `~/.mcp-server-appstoreconnect/screenshots/<id>/` (signed URLs expire — expiry is handled) and embed them for immediate visual analysis |
 | `list_unprocessed` | The triage queue — everything not yet marked processed |
 | `mark_processed` / `mark_unprocessed` | Local processed state, with an optional resolution note |
 | `analyze_feedback` | Structured analysis (screen, problem, component, severity, confidence, fix approach) — autonomous with `ANTHROPIC_API_KEY`, otherwise hands evidence to the host model |
@@ -29,49 +29,131 @@ Built on [krishnal/mcp-server-boilerplate](https://github.com/krishnal/mcp-serve
 
 Plus a `feedback://{id}` **resource template** (attach feedback to conversations) and a `triage_feedback` **prompt** (guided end-to-end triage workflow).
 
-## Quickstart
+## Getting started
 
-Requires **Node.js ≥ 24** (`nvm use` picks up `.nvmrc`; `node:sqlite` ships with Node 24).
-
-```bash
-npm install
-cp .env.example .env    # fill in the ASC_* credentials (below)
-
-npm run dev:stdio       # stdio transport (for MCP hosts) — or `npm run dev` for HTTP
-npm test                # 107 tests
-```
-
-### Credentials (App Store Connect API key)
+### 1. Create an App Store Connect API key
 
 1. App Store Connect → **Users and Access → Integrations → App Store Connect API → Team Keys → “+”**.
 2. Role: **Developer** (or App Manager). Beta-feedback endpoints require Admin, App Manager, or Developer.
 3. Note the **Issuer ID** (top of the page) and the key's **Key ID**, and download the **`.p8` file** — Apple lets you download it exactly once.
 
-```bash
-# .env
-ASC_ISSUER_ID=69a6de70-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-ASC_KEY_ID=ABC123DEFG
-ASC_PRIVATE_KEY_PATH=./AuthKey_ABC123DEFG.p8      # or:
-# ASC_PRIVATE_KEY_BASE64=$(base64 -i AuthKey_ABC123DEFG.p8)
-ASC_APP_ID=1234567890                              # optional; find via list_apps
-```
+You'll pass these three values (plus an optional default `ASC_APP_ID`, discoverable later with the `list_apps` tool) to the server as environment variables:
+
+| Variable | Value |
+|---|---|
+| `ASC_ISSUER_ID` | the Issuer ID UUID |
+| `ASC_KEY_ID` | the key's ID, e.g. `ABC123DEFG` |
+| `ASC_PRIVATE_KEY_PATH` **or** `ASC_PRIVATE_KEY_BASE64` | absolute path to the `.p8`, or `$(base64 -i AuthKey_XXXX.p8)` |
 
 **Key handling:** the `.p8` is read lazily, never logged (Pino redaction covers key material), and never leaves the process — screenshots are downloaded from Apple's pre-signed CDN URLs *without* attaching your bearer token. `*.p8`, `data/`, and `screenshots/` are gitignored. JWTs are ES256, minted for 15 minutes (Apple's cap is 20), cached, refreshed proactively, and re-minted once on a 401.
 
 The server boots **without** credentials too: local-state tools keep working and ASC-backed tools return instructions instead of failing cryptically.
 
-### Claude Code
+### 2. Connect your MCP client
+
+The npm package ships a `mcp-server-appstoreconnect` binary that speaks **stdio by default** (pass `--http` for the HTTP transport), so every client below is just "run it via npx with your credentials in the env block". Local state (SQLite cache, screenshots) lives in `~/.mcp-server-appstoreconnect/` regardless of which project the client spawns the server in.
+
+#### Claude Code
 
 ```bash
-npm run build
-claude mcp add testflight -- node /absolute/path/to/mcp-server-appstoreconnect/dist/server.js --stdio
+claude mcp add appstoreconnect \
+  --env ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+  --env ASC_KEY_ID=ABC123DEFG \
+  --env ASC_PRIVATE_KEY_PATH=/absolute/path/AuthKey_ABC123DEFG.p8 \
+  --env ASC_APP_ID=1234567890 \
+  -- npx -y mcp-server-appstoreconnect
 ```
 
-No env flags needed: at startup the server loads the `.env` sitting in **its own project root** (never the spawn directory — MCP hosts launch servers from arbitrary cwds). Real environment variables always override the file, so `--env` flags or a `claude_desktop_config.json` `"env"` block still win when you want per-host overrides.
+#### Claude Desktop
 
-Because the spawn cwd is arbitrary, keep `STATE_DB_PATH` and `SCREENSHOTS_DIR` **absolute** in `.env` (the defaults are relative and would resolve against whatever project Claude Code is running in).
+`claude_desktop_config.json` (Settings → Developer → Edit Config):
 
-In stdio mode all logs go to stderr; stdout is reserved for the protocol.
+```json
+{
+  "mcpServers": {
+    "appstoreconnect": {
+      "command": "npx",
+      "args": ["-y", "mcp-server-appstoreconnect"],
+      "env": {
+        "ASC_ISSUER_ID": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        "ASC_KEY_ID": "ABC123DEFG",
+        "ASC_PRIVATE_KEY_PATH": "/absolute/path/AuthKey_ABC123DEFG.p8",
+        "ASC_APP_ID": "1234567890"
+      }
+    }
+  }
+}
+```
+
+#### Cursor
+
+`~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (per-project) — identical shape to Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "appstoreconnect": {
+      "command": "npx",
+      "args": ["-y", "mcp-server-appstoreconnect"],
+      "env": {
+        "ASC_ISSUER_ID": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        "ASC_KEY_ID": "ABC123DEFG",
+        "ASC_PRIVATE_KEY_PATH": "/absolute/path/AuthKey_ABC123DEFG.p8",
+        "ASC_APP_ID": "1234567890"
+      }
+    }
+  }
+}
+```
+
+#### Codex
+
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.appstoreconnect]
+command = "npx"
+args = ["-y", "mcp-server-appstoreconnect"]
+
+[mcp_servers.appstoreconnect.env]
+ASC_ISSUER_ID = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+ASC_KEY_ID = "ABC123DEFG"
+ASC_PRIVATE_KEY_PATH = "/absolute/path/AuthKey_ABC123DEFG.p8"
+ASC_APP_ID = "1234567890"
+```
+
+#### Docker
+
+Use `ASC_PRIVATE_KEY_BASE64` (no file mount needed) and a volume for persistent state:
+
+```bash
+docker run -i --rm \
+  -e ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+  -e ASC_KEY_ID=ABC123DEFG \
+  -e ASC_PRIVATE_KEY_BASE64="$(base64 -i AuthKey_ABC123DEFG.p8)" \
+  -e ASC_APP_ID=1234567890 \
+  -v asc-mcp-state:/home/node/.mcp-server-appstoreconnect \
+  ghcr.io/krishnal/mcp-server-appstoreconnect node dist/server.js --stdio
+```
+
+The same command works as an MCP client entry (`"command": "docker"`, args as above) — the `-i` flag is what keeps stdio open. Images are published to GHCR on version tags; or build locally with `npm run docker:build`.
+
+### Running from source
+
+Requires **Node.js ≥ 24** (`nvm use` picks up `.nvmrc`; `node:sqlite` ships with Node 24).
+
+```bash
+npm install
+cp .env.example .env    # fill in the ASC_* credentials
+npm run dev:stdio       # stdio transport — or `npm run dev` for HTTP
+npm test                # 107 tests
+
+# hook a source checkout into Claude Code:
+npm run build
+claude mcp add appstoreconnect -- node /absolute/path/to/mcp-server-appstoreconnect/dist/server.js --stdio
+```
+
+When run from a source checkout, the server auto-loads the `.env` in **its own project root** (never the spawn directory), and real environment variables always override it. In stdio mode all logs go to stderr; stdout is reserved for the protocol.
 
 ## Example Claude workflows
 
@@ -145,11 +227,11 @@ docker run --rm -p 3000:3000 \
   -e ASC_ISSUER_ID=... -e ASC_KEY_ID=... -e ASC_PRIVATE_KEY_BASE64="$(base64 -i AuthKey.p8)" \
   -e ASC_APP_ID=... -e HTTP_HOST=0.0.0.0 \
   -e AUTH_MODE=api-key -e API_KEYS=your-key:* \
-  -v testflight-data:/app/data -v testflight-shots:/app/screenshots \
+  -v asc-mcp-state:/home/node/.mcp-server-appstoreconnect \
   mcp-server-appstoreconnect
 ```
 
-Mount volumes for `/app/data` and `/app/screenshots` so state survives restarts. Health checks: `/healthz` (liveness), `/readyz` (readiness); Prometheus metrics on `/metrics`.
+Mount a volume at `/home/node/.mcp-server-appstoreconnect` (the default state location) so the cache, processed flags and screenshots survive restarts. Health checks: `/healthz` (liveness), `/readyz` (readiness); Prometheus metrics on `/metrics`.
 
 ### AWS Lambda
 
