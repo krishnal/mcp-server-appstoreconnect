@@ -71,6 +71,6 @@ export function buildIssueBody(input: IssueBodyInput): string {
     sections.push(input.todoMarkdown, '');
   }
 
-  sections.push('---', '_Filed automatically from TestFlight feedback via testflight-mcp-server._');
+  sections.push('---', '_Filed automatically from TestFlight feedback via mcp-server-appstoreconnect._');
   return sections.join('\n');
 }

@@ -43,7 +43,7 @@ describe('lifecycle', () => {
       capabilities: Record<string, unknown>;
     };
     expect(result.protocolVersion).toBe(LATEST_PROTOCOL_VERSION);
-    expect(result.serverInfo.name).toBe('testflight-mcp-server');
+    expect(result.serverInfo.name).toBe('mcp-server-appstoreconnect');
     expect(result.capabilities['tools']).toEqual({ listChanged: true });
   });
 

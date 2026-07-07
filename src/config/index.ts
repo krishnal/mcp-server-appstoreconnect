@@ -21,7 +21,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
   // Server identity (reported in the MCP `initialize` handshake).
-  SERVER_NAME: z.string().min(1).default('testflight-mcp-server'),
+  SERVER_NAME: z.string().min(1).default('mcp-server-appstoreconnect'),
   SERVER_VERSION: z.string().min(1).default('0.1.0'),
   /** Optional human-readable instructions surfaced to MCP clients. */
   MCP_INSTRUCTIONS: z.string().optional(),

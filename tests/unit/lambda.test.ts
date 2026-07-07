@@ -57,7 +57,7 @@ describe('lambda adapter (stateless)', () => {
       lambdaContext,
     );
     expect((result as { statusCode: number }).statusCode).toBe(200);
-    expect(parseBody(result).result.serverInfo.name).toBe('testflight-mcp-server');
+    expect(parseBody(result).result.serverInfo.name).toBe('mcp-server-appstoreconnect');
   });
 
   it('serves tool calls with no prior handshake (ephemeral sessions)', async () => {

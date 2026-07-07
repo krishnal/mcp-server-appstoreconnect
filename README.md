@@ -1,4 +1,4 @@
-# TestFlight MCP Server
+# mcp-server-appstoreconnect
 
 A production-ready [Model Context Protocol](https://modelcontextprotocol.io) server that connects Claude Code (or any MCP host) to your **TestFlight beta feedback** in App Store Connect — so tester feedback flows straight into an AI-assisted workflow: *fetch → analyze screenshots → prioritize → generate TODOs → file issues → fix the code* without leaving the IDE.
 
@@ -64,7 +64,7 @@ The server boots **without** credentials too: local-state tools keep working and
 
 ```bash
 npm run build
-claude mcp add testflight -- node /absolute/path/to/testflight-mcp-server/dist/server.js --stdio
+claude mcp add testflight -- node /absolute/path/to/mcp-server-appstoreconnect/dist/server.js --stdio
 ```
 
 No env flags needed: at startup the server loads the `.env` sitting in **its own project root** (never the spawn directory — MCP hosts launch servers from arbitrary cwds). Real environment variables always override the file, so `--env` flags or a `claude_desktop_config.json` `"env"` block still win when you want per-host overrides.
@@ -140,13 +140,13 @@ npm run build && npm run start:stdio
 ### Docker (HTTP)
 
 ```bash
-docker build -f docker/Dockerfile -t testflight-mcp-server .
+docker build -f docker/Dockerfile -t mcp-server-appstoreconnect .
 docker run --rm -p 3000:3000 \
   -e ASC_ISSUER_ID=... -e ASC_KEY_ID=... -e ASC_PRIVATE_KEY_BASE64="$(base64 -i AuthKey.p8)" \
   -e ASC_APP_ID=... -e HTTP_HOST=0.0.0.0 \
   -e AUTH_MODE=api-key -e API_KEYS=your-key:* \
   -v testflight-data:/app/data -v testflight-shots:/app/screenshots \
-  testflight-mcp-server
+  mcp-server-appstoreconnect
 ```
 
 Mount volumes for `/app/data` and `/app/screenshots` so state survives restarts. Health checks: `/healthz` (liveness), `/readyz` (readiness); Prometheus metrics on `/metrics`.

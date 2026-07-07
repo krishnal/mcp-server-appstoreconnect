@@ -24,7 +24,7 @@ export class GitHubIssueProvider implements IssueProvider {
         authorization: `Bearer ${this.config.token}`,
         accept: 'application/vnd.github+json',
         'content-type': 'application/json',
-        'user-agent': 'testflight-mcp-server',
+        'user-agent': 'mcp-server-appstoreconnect',
         'x-github-api-version': '2022-11-28',
       },
       body: JSON.stringify({

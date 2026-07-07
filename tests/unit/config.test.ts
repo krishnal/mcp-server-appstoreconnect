@@ -4,7 +4,7 @@ import { ConfigError, loadConfig } from '../../src/config/index.js';
 describe('config', () => {
   it('loads sane defaults from an empty environment', () => {
     const config = loadConfig({});
-    expect(config.server.name).toBe('testflight-mcp-server');
+    expect(config.server.name).toBe('mcp-server-appstoreconnect');
     expect(config.transport).toBe('http');
     expect(config.http.port).toBe(3000);
     expect(config.auth.mode).toBe('none');
