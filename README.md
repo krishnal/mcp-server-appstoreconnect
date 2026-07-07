@@ -217,4 +217,4 @@ Partial provider/credential configuration fails at boot with a readable error �
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE). Provided **as is**, without warranty of any kind — you are solely responsible for determining the appropriateness of using this software and assume all risks associated with it (see LICENSE §7 Disclaimer of Warranty and §8 Limitation of Liability), including any interaction it performs with your App Store Connect account, TestFlight data, or issue trackers.

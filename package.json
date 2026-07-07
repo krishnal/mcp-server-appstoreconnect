@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "MCP server for TestFlight feedback — read, analyze, prioritize, and act on App Store Connect beta feedback from Claude Code or any MCP host.",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=24"
   },
