@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import { defineTool } from '../../core/registry/define.js';
 import type { AppStoreVersionSummary } from '../../asc/types.js';
+import { buildReadinessReport, gatherReadinessFacts } from '../../asc/readiness.js';
 import { jsonResult, requireRelease, resolveAppId } from './shared.js';
 
 export interface StepOutcome {
@@ -64,5 +65,24 @@ export const getReleaseStatusTool = defineTool({
       })),
     );
     return jsonResult({ versions: withPhased, reviewSubmissions });
+  },
+});
+
+export const checkSubmissionReadinessTool = defineTool({
+  name: 'check_submission_readiness',
+  title: 'Check submission readiness',
+  description:
+    'Deterministic completeness gate for App Store submission: verifies an editable version exists ' +
+    'with a processed build, export compliance, description, screenshots, privacy policy, review ' +
+    'contact, and age rating. Returns {ready, checks[]}. submit_for_review runs this automatically.',
+  inputSchema: z.object({
+    appId: z.string().optional().describe('App Store Connect app id (defaults to ASC_APP_ID)'),
+    platform: z.string().optional().describe('Platform, e.g. "IOS" (default: all)'),
+  }),
+  annotations: { readOnlyHint: true, openWorldHint: true },
+  handler: async ({ appId, platform }, ctx) => {
+    const release = requireRelease(ctx);
+    const facts = await gatherReadinessFacts(release, resolveAppId(appId, ctx), platform, ctx.signal);
+    return jsonResult(buildReadinessReport(facts));
   },
 });

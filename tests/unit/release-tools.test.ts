@@ -89,3 +89,30 @@ describe('get_release_status', () => {
     expect(result.versions[0].phasedRelease).toMatchObject({ phasedReleaseState: 'ACTIVE', currentDayNumber: 3 });
   });
 });
+
+describe('check_submission_readiness', () => {
+  it('reports failing checks for an empty app', async () => {
+    const { client } = await setupRelease(emptyFakeRelease());
+    const result = json(await call(client, 'check_submission_readiness'));
+    expect(result.ready).toBe(false);
+    expect(result.checks[0]).toMatchObject({ name: 'version-exists', status: 'fail' });
+  });
+
+  it('passes for a fully prepared version', async () => {
+    const { client } = await setupRelease(
+      emptyFakeRelease({
+        versions: [{ id: 'v-1', versionString: '2.4.0', state: 'PREPARE_FOR_SUBMISSION', buildId: 'build-2', buildVersion: '422' }],
+        builds: [{ id: 'build-2', version: '422', processingState: 'VALID', expired: false, usesNonExemptEncryption: false }],
+        localizations: new Map([
+          ['v-1', [{ id: 'loc-1', locale: 'en-US', description: 'A great app.', whatsNew: 'Fixes.' }]],
+        ]),
+        screenshotSets: new Map([['loc-1', [{ id: 'set-1', displayType: 'APP_IPHONE_67', screenshotCount: 3 }]]]),
+        reviewDetails: new Map([['v-1', { id: 'rd-1', contactEmail: 'dev@example.com' }]]),
+        appInfo: { appInfoId: 'info-1', privacyPolicyUrl: 'https://example.com/p', ageRating: { declared: true } },
+      }),
+    );
+    const result = json(await call(client, 'check_submission_readiness'));
+    expect(result.ready).toBe(true);
+    expect(result.versionId).toBe('v-1');
+  });
+});
