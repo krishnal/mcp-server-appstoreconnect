@@ -9,6 +9,8 @@ import { defineTool } from '../../core/registry/define.js';
 import { gatherAppFacts } from '../../audit/facts.js';
 import { runAudit } from '../../audit/engine.js';
 import { guidelineRules, RULE_PACK_LAST_REVIEWED } from '../../audit/guidelines/index.js';
+import { parseRejection } from '../../audit/rejection-parser.js';
+import type { GuidelineRule } from '../../audit/types.js';
 import { jsonResult, requireRelease, resolveAppId } from './shared.js';
 
 export const auditAppReviewTool = defineTool({
@@ -42,6 +44,56 @@ export const auditAppReviewTool = defineTool({
       findings,
       skippedChecks,
       projectWarnings: facts.project?.warnings ?? [],
+    });
+  },
+});
+
+/** Rules whose guideline reference matches the cited one (prefix match either way). */
+function matchRules(guideline: string | undefined): GuidelineRule[] {
+  if (!guideline) return [];
+  return guidelineRules.filter(
+    (rule) => rule.guideline.startsWith(guideline) || guideline.startsWith(rule.guideline),
+  );
+}
+
+export const triageRejectionTool = defineTool({
+  name: 'triage_rejection',
+  title: 'Triage an App Review rejection',
+  description:
+    'Parses a pasted App Review rejection message into per-guideline items, maps each cited ' +
+    'guideline to the audit rule pack for fix steps, and flags items that need a written reply ' +
+    '(reviewer questions). Works without ASC credentials — the reasoning happens over the pasted text.',
+  inputSchema: z.object({
+    rejectionText: z
+      .string()
+      .min(1)
+      .describe('The full rejection message from App Review / Resolution Center, pasted verbatim'),
+  }),
+  annotations: { readOnlyHint: true },
+  handler: async ({ rejectionText }) => {
+    const items = parseRejection(rejectionText).map((item) => ({
+      guideline: item.guideline,
+      heading: item.heading,
+      replyNeeded: item.questions.length > 0,
+      questions: item.questions,
+      matchedRules: matchRules(item.guideline).map((rule) => ({
+        ruleId: rule.id,
+        title: rule.title,
+        link: rule.link,
+        fix: rule.fix,
+        tools: rule.tools ?? [],
+      })),
+      body: item.body,
+    }));
+    return jsonResult({
+      items,
+      ...(items.some((i) => i.replyNeeded)
+        ? {
+            note:
+              'Items with replyNeeded require a written response in App Store Connect (Resolution ' +
+              'Center), not only a fix.',
+          }
+        : {}),
     });
   },
 });

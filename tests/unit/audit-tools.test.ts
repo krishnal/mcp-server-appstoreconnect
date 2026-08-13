@@ -84,3 +84,37 @@ describe('audit_app_review', () => {
     expect(firstText(result)).toMatch(/ASC_ISSUER_ID/);
   });
 });
+
+describe('triage_rejection', () => {
+  const REJECTION = `Guideline 5.1.1(ii) - Legal - Privacy - Data Collection and Storage
+Update the photo library purpose string to explain how the app will use the requested information.
+Guideline 2.1 - Information Needed
+- What face data does the app collect?
+- How long will face data be retained?`;
+
+  it('maps cited guidelines to rules and flags reply-needed items — without ASC credentials', async () => {
+    const client = await setup(); // no release client on purpose
+    const result = json(await call(client, 'triage_rejection', { rejectionText: REJECTION }));
+    expect(result.items).toHaveLength(2);
+
+    const purpose = result.items[0];
+    expect(purpose.guideline).toBe('5.1.1(ii)');
+    expect(purpose.replyNeeded).toBe(false);
+    expect(purpose.matchedRules.map((r: { ruleId: string }) => r.ruleId)).toContain('privacy.purpose-strings');
+
+    const info = result.items[1];
+    expect(info.guideline).toBe('2.1');
+    expect(info.replyNeeded).toBe(true);
+    expect(info.questions).toHaveLength(2);
+    expect(info.matchedRules.map((r: { ruleId: string }) => r.ruleId)).toContain('completeness.demo-account');
+    expect(result.note).toMatch(/written response/);
+  });
+
+  it('degrades gracefully for unknown formats', async () => {
+    const client = await setup();
+    const result = json(await call(client, 'triage_rejection', { rejectionText: 'Nonsense rejection.' }));
+    expect(result.items).toEqual([
+      expect.objectContaining({ heading: 'Rejection message', matchedRules: [], replyNeeded: false }),
+    ]);
+  });
+});
