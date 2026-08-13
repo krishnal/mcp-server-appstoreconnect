@@ -96,6 +96,15 @@ describe('tool registration', () => {
         'group_duplicates',
         'prioritize_feedback',
         'create_issue',
+        'list_builds',
+        'get_release_status',
+        'check_submission_readiness',
+        'prepare_app_store_version',
+        'distribute_build',
+        'submit_for_review',
+        'release_version',
+        'audit_app_review',
+        'triage_rejection',
       ]),
     );
   });

@@ -27,7 +27,30 @@ Built on [krishnal/mcp-server-boilerplate](https://github.com/krishnal/mcp-serve
 | `prioritize_feedback` | Rank by severity × duplicate frequency × recency, with human-readable reasons |
 | `create_issue` | File a GitHub/Jira/Linear issue with comment, context, analysis, TODO, screenshot paths — idempotent per feedback+provider |
 
+### Release pipeline
+
+| Tool | What it does |
+|---|---|
+| `list_builds` | Uploaded builds for an app (newest first): id, version, processing state, expiry, export-compliance status |
+| `get_release_status` | Post-submission tracking: recent App Store versions with their states, review submissions, and phased-release progress |
+| `check_submission_readiness` | Deterministic completeness gate: editable version with a processed build, export compliance, description, screenshots, privacy policy, review contact, age rating — returns `{ready, checks[]}` |
+| `prepare_app_store_version` | Creates or updates an App Store version: attach a build, set what's-new text, enable phased release — idempotent, `versionString` + optional `buildId`, `whatsNew`, `releaseType`, `phased` |
+| `distribute_build` | Takes an uploaded build to testers: declares export compliance, submits for external beta review if needed, assigns beta groups — idempotent, `buildId` + `groups` + optional `usesNonExemptEncryption` |
+| `submit_for_review` | Submits the prepared version to Apple review; runs `check_submission_readiness` first and refuses on failing checks unless `force:true` |
+| `release_version` | Releases an approved, manually-held version (state `PENDING_DEVELOPER_RELEASE`) to production — only needed for `releaseType: MANUAL` |
+
+### Review audit
+
+| Tool | What it does |
+|---|---|
+| `audit_app_review` | Audits the app against a curated App Store Review Guidelines rule pack, tailored to the app's nature (subscriptions, protected-resource usage, age rating…) — optional `projectPath` also checks the local Xcode project |
+| `triage_rejection` | Parses a pasted App Review rejection message into per-guideline items, maps each to the rule pack for fix steps, and flags items needing a written reply — `rejectionText` |
+
 Plus a `feedback://{id}` **resource template** (attach feedback to conversations) and a `triage_feedback` **prompt** (guided end-to-end triage workflow).
+
+> Write operations (`prepare_app_store_version`, `distribute_build`, `submit_for_review`, `release_version`) require an App Store Connect API key with the **App Manager** role; the read/feedback tools work with lesser roles.
+
+> `audit_app_review` accepts a `projectPath` pointing at your local Xcode project to also audit Info.plist purpose strings, entitlements, and privacy manifests — these are not available via the App Store Connect API. Build upload itself is out of scope: upload with Xcode, Transporter, or CI, then take over with `list_builds`.
 
 ## Getting started
 
@@ -146,7 +169,7 @@ Requires **Node.js ≥ 24** (`nvm use` picks up `.nvmrc`; `node:sqlite` ships wi
 npm install
 cp .env.example .env    # fill in the ASC_* credentials
 npm run dev:stdio       # stdio transport — or `npm run dev` for HTTP
-npm test                # 107 tests
+npm test                # 179 tests
 
 # hook a source checkout into Claude Code:
 npm run build
@@ -271,7 +294,7 @@ export const myTool = defineTool({
 ## Testing
 
 ```bash
-npm test              # 107 tests: unit + protocol-level + transport integration
+npm test              # 179 tests: unit + protocol-level + transport integration
 npm run coverage
 npm run typecheck
 ```
