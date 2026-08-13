@@ -56,6 +56,7 @@ export interface BuildAttributes {
   uploadedDate?: string;
   expired?: boolean;
   processingState?: string;
+  usesNonExemptEncryption?: boolean | null;
 }
 
 /** Shared by screenshot and crash feedback submissions. */
@@ -94,6 +95,68 @@ export interface ScreenshotImage {
 
 export interface CrashLogAttributes {
   logText?: string;
+}
+
+export interface AppStoreVersionAttributes {
+  versionString?: string;
+  platform?: string;
+  /** Current ASC field; `appStoreState` is the deprecated pre-2023 name. */
+  appVersionState?: string;
+  appStoreState?: string;
+  releaseType?: string;
+  createdDate?: string;
+}
+
+export interface AppStoreVersionLocalizationAttributes {
+  locale?: string;
+  description?: string;
+  whatsNew?: string;
+  supportUrl?: string;
+  keywords?: string;
+  promotionalText?: string;
+}
+
+export interface AppScreenshotSetAttributes {
+  screenshotDisplayType?: string;
+}
+
+export interface ReviewSubmissionAttributes {
+  state?: string;
+  platform?: string;
+  submittedDate?: string;
+}
+
+export interface BetaGroupAttributes {
+  name?: string;
+  isInternalGroup?: boolean;
+}
+
+export interface BuildBetaDetailAttributes {
+  externalBuildState?: string;
+  internalBuildState?: string;
+}
+
+export interface PhasedReleaseAttributes {
+  phasedReleaseState?: string;
+  currentDayNumber?: number;
+}
+
+export interface ReviewDetailAttributes {
+  contactEmail?: string;
+  contactFirstName?: string;
+  contactLastName?: string;
+  contactPhone?: string;
+  demoAccountRequired?: boolean;
+}
+
+export interface AppInfoLocalizationAttributes {
+  locale?: string;
+  privacyPolicyUrl?: string;
+}
+
+export interface AgeRatingDeclarationAttributes {
+  /** e.g. 'NONE' | 'PARENTAL_CONTROLS' | 'AGE_ASSURANCE' (In-App Controls). */
+  inAppControls?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +216,83 @@ export interface FeedbackListFilters {
   /** Max items to return across pages (server page size is capped at 200). */
   limit?: number;
   sort?: 'createdDate' | '-createdDate';
+}
+
+// Release domain types
+export type ReleaseType = 'AFTER_APPROVAL' | 'MANUAL' | 'SCHEDULED';
+
+export interface BuildSummary {
+  id: string;
+  version?: string;
+  uploadedDate?: string;
+  processingState?: string;
+  expired?: boolean;
+  usesNonExemptEncryption?: boolean | null;
+}
+
+export interface AppStoreVersionSummary {
+  id: string;
+  versionString?: string;
+  state?: string;
+  releaseType?: string;
+  platform?: string;
+  createdDate?: string;
+  buildId?: string;
+  buildVersion?: string;
+}
+
+export interface VersionLocalizationSummary {
+  id: string;
+  locale?: string;
+  description?: string;
+  whatsNew?: string;
+  supportUrl?: string;
+}
+
+export interface ScreenshotSetSummary {
+  id: string;
+  displayType?: string;
+  screenshotCount: number;
+}
+
+export interface ReviewSubmissionSummary {
+  id: string;
+  state?: string;
+  platform?: string;
+  submittedDate?: string;
+}
+
+export interface BetaGroupSummary {
+  id: string;
+  name?: string;
+  isInternalGroup?: boolean;
+}
+
+export interface BuildBetaDetailSummary {
+  id: string;
+  externalBuildState?: string;
+  internalBuildState?: string;
+}
+
+export interface PhasedReleaseSummary {
+  id: string;
+  phasedReleaseState?: string;
+  currentDayNumber?: number;
+}
+
+export interface ReviewDetailSummary {
+  id: string;
+  contactEmail?: string;
+  contactFirstName?: string;
+  contactLastName?: string;
+  contactPhone?: string;
+  demoAccountRequired?: boolean;
+}
+
+export interface AppInfoSummary {
+  appInfoId: string;
+  privacyPolicyUrl?: string;
+  ageRating: { declared: boolean; inAppControls?: string | null };
 }
 
 /** Typed App Store Connect API error, safe to surface to the calling LLM. */
