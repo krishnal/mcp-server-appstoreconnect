@@ -181,3 +181,77 @@ describe('prepare_app_store_version', () => {
     expect(firstText(result)).toMatch(/READY_FOR_SALE/);
   });
 });
+
+describe('distribute_build', () => {
+  function distributableFake(): FakeRelease {
+    return emptyFakeRelease({
+      builds: [{ id: 'build-2', version: '422', processingState: 'VALID', expired: false, usesNonExemptEncryption: null }],
+      betaGroups: [
+        { id: 'g-int', name: 'Team', isInternalGroup: true },
+        { id: 'g-ext', name: 'External Testers', isInternalGroup: false },
+      ],
+      betaDetails: new Map([['build-2', { id: 'bd-1', externalBuildState: 'READY_FOR_BETA_SUBMISSION' }]]),
+    });
+  }
+
+  it('sets compliance, submits beta review, and assigns groups', async () => {
+    const fake = distributableFake();
+    const { client } = await setupRelease(fake);
+    const result = json(
+      await call(client, 'distribute_build', {
+        buildId: 'build-2',
+        groups: ['External Testers'],
+        usesNonExemptEncryption: false,
+      }),
+    );
+    expect(result.steps).toEqual([
+      expect.objectContaining({ step: 'export-compliance', status: 'done' }),
+      expect.objectContaining({ step: 'beta-review', status: 'done' }),
+      expect.objectContaining({ step: 'assign-groups', status: 'done' }),
+    ]);
+    expect(fake.calls).toContain('setExportCompliance:build-2:false');
+    expect(fake.calls).toContain('submitForBetaReview:build-2');
+    expect(fake.calls).toContain('addBuildToBetaGroups:build-2:g-ext');
+  });
+
+  it('fails the compliance step when unanswered and no parameter given', async () => {
+    const fake = distributableFake();
+    const { client } = await setupRelease(fake);
+    const result = await call(client, 'distribute_build', { buildId: 'build-2', groups: ['Team'] });
+    expect(result.isError).toBe(true);
+    const parsed = json(result);
+    expect(parsed.steps[0]).toMatchObject({ step: 'export-compliance', status: 'failed' });
+    expect(parsed.steps[0].detail).toMatch(/usesNonExemptEncryption/);
+  });
+
+  it('skips completed steps on re-run (idempotent resume)', async () => {
+    const fake = distributableFake();
+    fake.builds[0]!.usesNonExemptEncryption = false;
+    fake.betaDetails.set('build-2', { id: 'bd-1', externalBuildState: 'IN_BETA_REVIEW' });
+    const { client } = await setupRelease(fake);
+    const result = json(await call(client, 'distribute_build', { buildId: 'build-2', groups: ['External Testers'] }));
+    expect(result.steps).toEqual([
+      expect.objectContaining({ step: 'export-compliance', status: 'skipped' }),
+      expect.objectContaining({ step: 'beta-review', status: 'skipped' }),
+      expect.objectContaining({ step: 'assign-groups', status: 'done' }),
+    ]);
+  });
+
+  it('fails group resolution with the available names', async () => {
+    const fake = distributableFake();
+    fake.builds[0]!.usesNonExemptEncryption = false;
+    const { client } = await setupRelease(fake);
+    const result = await call(client, 'distribute_build', { buildId: 'build-2', groups: ['Nope'] });
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toMatch(/External Testers/);
+  });
+
+  it('skips beta review when only internal groups are targeted', async () => {
+    const fake = distributableFake();
+    fake.builds[0]!.usesNonExemptEncryption = false;
+    const { client } = await setupRelease(fake);
+    const result = json(await call(client, 'distribute_build', { buildId: 'build-2', groups: ['Team'] }));
+    expect(result.steps[1]).toMatchObject({ step: 'beta-review', status: 'skipped' });
+    expect(fake.calls).not.toContain('submitForBetaReview:build-2');
+  });
+});

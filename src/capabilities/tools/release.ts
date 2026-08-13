@@ -184,3 +184,98 @@ export const prepareAppStoreVersionTool = defineTool({
     return failed ? { ...result, isError: true } : result;
   },
 });
+
+/** External beta states that mean review is already submitted or done. */
+const BETA_REVIEW_DONE_STATES = [
+  'WAITING_FOR_BETA_REVIEW',
+  'IN_BETA_REVIEW',
+  'BETA_APPROVED',
+  'READY_FOR_BETA_TESTING',
+  'IN_BETA_TESTING',
+];
+
+export const distributeBuildTool = defineTool({
+  name: 'distribute_build',
+  title: 'Distribute build to TestFlight groups',
+  description:
+    'Takes an already-uploaded build to testers: declares export compliance (if needed), submits ' +
+    'for external beta review (if an external group is targeted), and assigns the build to beta ' +
+    'groups. Idempotent — completed steps are skipped on re-run. Reports per-step outcomes.',
+  inputSchema: z.object({
+    appId: z.string().optional().describe('App Store Connect app id (defaults to ASC_APP_ID)'),
+    buildId: z.string().describe('Build to distribute (from list_builds)'),
+    groups: z.array(z.string()).min(1).describe('Beta group names to assign the build to'),
+    usesNonExemptEncryption: z
+      .boolean()
+      .optional()
+      .describe('Encryption declaration; required if the build has none yet (false = only exempt encryption)'),
+  }),
+  annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: true },
+  handler: async ({ appId, buildId, groups, usesNonExemptEncryption }, ctx) => {
+    const release = requireRelease(ctx);
+    const resolved = resolveAppId(appId, ctx);
+    const steps: StepOutcome[] = [];
+
+    const build = await release.getBuild(buildId, ctx.signal);
+    if (!build) throw new Error(`Build "${buildId}" not found. Use list_builds to see available builds.`);
+
+    // Step: export-compliance.
+    if (build.usesNonExemptEncryption !== null && build.usesNonExemptEncryption !== undefined) {
+      steps.push({ step: 'export-compliance', status: 'skipped', detail: 'Already declared.' });
+    } else if (usesNonExemptEncryption === undefined) {
+      steps.push({
+        step: 'export-compliance',
+        status: 'failed',
+        detail:
+          'Build has no encryption declaration. Pass usesNonExemptEncryption (false when the app ' +
+          'only uses exempt encryption like HTTPS).',
+      });
+    } else {
+      await release.setExportCompliance(buildId, usesNonExemptEncryption, ctx.signal);
+      steps.push({ step: 'export-compliance', status: 'done', detail: `Declared usesNonExemptEncryption=${String(usesNonExemptEncryption)}.` });
+    }
+
+    // Resolve group names → ids before the remaining steps.
+    const available = await release.listBetaGroups(resolved, ctx.signal);
+    const wanted = groups.map((name) => ({
+      name,
+      group: available.find((g) => g.name === name),
+    }));
+    const missing = wanted.filter((w) => !w.group).map((w) => w.name);
+    if (missing.length > 0) {
+      throw new Error(
+        `Unknown beta group(s): ${missing.join(', ')}. Available: ${available.map((g) => g.name).filter(Boolean).join(', ') || '(none)'}.`,
+      );
+    }
+    const resolvedGroups = wanted.map((w) => w.group!);
+    const needsExternal = resolvedGroups.some((g) => g.isInternalGroup === false);
+
+    // Step: beta-review (only external groups need it).
+    if (!needsExternal) {
+      steps.push({ step: 'beta-review', status: 'skipped', detail: 'Only internal groups targeted.' });
+    } else {
+      const detail = await release.getBuildBetaDetail(buildId, ctx.signal);
+      const state = detail?.externalBuildState;
+      if (state && BETA_REVIEW_DONE_STATES.includes(state)) {
+        steps.push({ step: 'beta-review', status: 'skipped', detail: `External state is ${state}.` });
+      } else if (steps.some((s) => s.step === 'export-compliance' && s.status === 'failed')) {
+        steps.push({ step: 'beta-review', status: 'failed', detail: 'Blocked on export compliance.' });
+      } else {
+        await release.submitForBetaReview(buildId, ctx.signal);
+        steps.push({ step: 'beta-review', status: 'done', detail: 'Submitted for beta review.' });
+      }
+    }
+
+    // Step: assign-groups.
+    await release.addBuildToBetaGroups(buildId, resolvedGroups.map((g) => g.id), ctx.signal);
+    steps.push({
+      step: 'assign-groups',
+      status: 'done',
+      detail: `Assigned to: ${resolvedGroups.map((g) => g.name).join(', ')}.`,
+    });
+
+    const failed = steps.some((s) => s.status === 'failed');
+    const result = jsonResult({ buildId, steps });
+    return failed ? { ...result, isError: true } : result;
+  },
+});

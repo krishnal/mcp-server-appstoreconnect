@@ -22,7 +22,7 @@ import {
   markUnprocessedTool,
 } from './tools/feedback.js';
 import { createIssueTool } from './tools/issues.js';
-import { checkSubmissionReadinessTool, getReleaseStatusTool, listBuildsTool, prepareAppStoreVersionTool } from './tools/release.js';
+import { checkSubmissionReadinessTool, distributeBuildTool, getReleaseStatusTool, listBuildsTool, prepareAppStoreVersionTool } from './tools/release.js';
 import { downloadScreenshotTool } from './tools/screenshots.js';
 import {
   generateTodoTool,
@@ -55,6 +55,7 @@ export function registerAllCapabilities(registry: CapabilityRegistry): void {
     .registerTool(getReleaseStatusTool)
     .registerTool(checkSubmissionReadinessTool)
     .registerTool(prepareAppStoreVersionTool)
+    .registerTool(distributeBuildTool)
     // Resources & prompts
     .registerResourceTemplate(feedbackResourceTemplate)
     .registerPrompt(triageFeedbackPrompt);
