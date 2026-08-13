@@ -116,3 +116,68 @@ describe('check_submission_readiness', () => {
     expect(result.versionId).toBe('v-1');
   });
 });
+
+describe('prepare_app_store_version', () => {
+  it('creates a version, attaches the build, sets whatsNew, and enables phased release', async () => {
+    const fake = emptyFakeRelease({
+      builds: [{ id: 'build-2', version: '422', processingState: 'VALID', expired: false, usesNonExemptEncryption: false }],
+    });
+    const { client } = await setupRelease(fake);
+    const result = json(
+      await call(client, 'prepare_app_store_version', {
+        versionString: '2.4.0',
+        buildId: 'build-2',
+        whatsNew: 'Bug fixes.',
+        releaseType: 'AFTER_APPROVAL',
+        phased: true,
+      }),
+    );
+    expect(result.steps).toEqual([
+      expect.objectContaining({ step: 'version', status: 'done' }),
+      expect.objectContaining({ step: 'attach-build', status: 'done' }),
+      expect.objectContaining({ step: 'whats-new', status: 'failed' }), // no localization exists in this fake
+      expect.objectContaining({ step: 'phased-release', status: 'done' }),
+    ]);
+    expect(fake.calls).toContain('createVersion:2.4.0:AFTER_APPROVAL');
+    expect(fake.calls).toContain('setVersionBuild:v-new-1:build-2');
+  });
+
+  it('is idempotent: re-running updates the existing version in place', async () => {
+    const fake = emptyFakeRelease({
+      versions: [
+        { id: 'v-1', versionString: '2.4.0', state: 'PREPARE_FOR_SUBMISSION', releaseType: 'AFTER_APPROVAL', buildId: 'build-2' },
+      ],
+      builds: [{ id: 'build-2', version: '422', processingState: 'VALID', expired: false, usesNonExemptEncryption: false }],
+      localizations: new Map([['v-1', [{ id: 'loc-1', locale: 'en-US' }]]]),
+    });
+    const { client } = await setupRelease(fake);
+    const result = json(
+      await call(client, 'prepare_app_store_version', {
+        versionString: '2.4.0',
+        buildId: 'build-2',
+        whatsNew: 'Bug fixes.',
+        releaseType: 'MANUAL',
+      }),
+    );
+    expect(result.versionId).toBe('v-1');
+    expect(result.steps).toEqual([
+      expect.objectContaining({ step: 'version', status: 'done', detail: expect.stringMatching(/releaseType/) }),
+      expect.objectContaining({ step: 'attach-build', status: 'skipped' }),
+      expect.objectContaining({ step: 'whats-new', status: 'done' }),
+      expect.objectContaining({ step: 'phased-release', status: 'skipped' }),
+    ]);
+    expect(fake.calls).toContain('updateVersion:v-1:MANUAL');
+    expect(fake.calls).toContain('updateLocalization:loc-1:Bug fixes.');
+    expect(fake.calls).not.toContain('createVersion:2.4.0:MANUAL');
+  });
+
+  it('refuses to reuse a version that exists in a non-editable state', async () => {
+    const fake = emptyFakeRelease({
+      versions: [{ id: 'v-1', versionString: '2.4.0', state: 'READY_FOR_SALE' }],
+    });
+    const { client } = await setupRelease(fake);
+    const result = await call(client, 'prepare_app_store_version', { versionString: '2.4.0' });
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toMatch(/READY_FOR_SALE/);
+  });
+});

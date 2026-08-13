@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import { defineTool } from '../../core/registry/define.js';
 import type { AppStoreVersionSummary } from '../../asc/types.js';
-import { buildReadinessReport, gatherReadinessFacts } from '../../asc/readiness.js';
+import { buildReadinessReport, gatherReadinessFacts, EDITABLE_STATES } from '../../asc/readiness.js';
 import { jsonResult, requireRelease, resolveAppId } from './shared.js';
 
 export interface StepOutcome {
@@ -84,5 +84,103 @@ export const checkSubmissionReadinessTool = defineTool({
     const release = requireRelease(ctx);
     const facts = await gatherReadinessFacts(release, resolveAppId(appId, ctx), platform, ctx.signal);
     return jsonResult(buildReadinessReport(facts));
+  },
+});
+
+const releaseTypeSchema = z
+  .enum(['AFTER_APPROVAL', 'MANUAL', 'SCHEDULED'])
+  .describe('How the version goes live after approval (default AFTER_APPROVAL)');
+
+export const prepareAppStoreVersionTool = defineTool({
+  name: 'prepare_app_store_version',
+  title: 'Prepare App Store version',
+  description:
+    'Creates or updates an App Store version, optionally attaches a build, sets what\'s-new text, ' +
+    'and enables phased release. Idempotent: re-running updates in place and skips completed steps. ' +
+    'Heavy metadata (description, screenshots, privacy) is managed in App Store Connect — ' +
+    'check_submission_readiness reports what is missing there.',
+  inputSchema: z.object({
+    appId: z.string().optional().describe('App Store Connect app id (defaults to ASC_APP_ID)'),
+    versionString: z.string().describe('Marketing version, e.g. "2.4.0"'),
+    buildId: z.string().optional().describe('Build to attach (from list_builds)'),
+    whatsNew: z.string().optional().describe("What's-new release notes for the primary localization"),
+    releaseType: releaseTypeSchema.optional(),
+    phased: z.boolean().optional().describe('Enable 7-day phased release (default false)'),
+    platform: z.string().optional().describe('Platform (default "IOS")'),
+  }),
+  annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: true },
+  handler: async ({ appId, versionString, buildId, whatsNew, releaseType, phased, platform }, ctx) => {
+    const release = requireRelease(ctx);
+    const resolved = resolveAppId(appId, ctx);
+    const wantedType = releaseType ?? 'AFTER_APPROVAL';
+    const steps: StepOutcome[] = [];
+
+    // Step: version (create or update in place).
+    const versions = await release.listVersions(resolved, { platform, limit: 20 }, ctx.signal);
+    let version = versions.find((v) => v.versionString === versionString);
+    if (version && version.state && !EDITABLE_STATES.includes(version.state)) {
+      throw new Error(
+        `Version ${versionString} already exists in state ${version.state} and cannot be edited. ` +
+          'Use a new versionString.',
+      );
+    }
+    if (!version) {
+      version = await release.createVersion(
+        resolved,
+        { versionString, platform: platform ?? 'IOS', releaseType: wantedType },
+        ctx.signal,
+      );
+      steps.push({ step: 'version', status: 'done', detail: `Created version ${versionString}.` });
+    } else if (version.releaseType !== wantedType) {
+      await release.updateVersion(version.id, { releaseType: wantedType }, ctx.signal);
+      steps.push({ step: 'version', status: 'done', detail: `Updated releaseType to ${wantedType}.` });
+    } else {
+      steps.push({ step: 'version', status: 'skipped', detail: 'Version already up to date.' });
+    }
+
+    // Step: attach-build.
+    if (!buildId) {
+      steps.push({ step: 'attach-build', status: 'skipped', detail: 'No buildId given.' });
+    } else if (version.buildId === buildId) {
+      steps.push({ step: 'attach-build', status: 'skipped', detail: 'Build already attached.' });
+    } else {
+      await release.setVersionBuild(version.id, buildId, ctx.signal);
+      steps.push({ step: 'attach-build', status: 'done', detail: `Attached build ${buildId}.` });
+    }
+
+    // Step: whats-new (primary localization = first returned).
+    if (!whatsNew) {
+      steps.push({ step: 'whats-new', status: 'skipped', detail: 'No whatsNew given.' });
+    } else {
+      const localizations = await release.getVersionLocalizations(version.id, ctx.signal);
+      const primary = localizations[0];
+      if (!primary) {
+        steps.push({
+          step: 'whats-new',
+          status: 'failed',
+          detail: 'Version has no localizations yet — add one in App Store Connect, then re-run.',
+        });
+      } else {
+        await release.updateLocalization(primary.id, { whatsNew }, ctx.signal);
+        steps.push({ step: 'whats-new', status: 'done', detail: `Set what's-new for ${primary.locale ?? 'primary'}.` });
+      }
+    }
+
+    // Step: phased-release.
+    if (!phased) {
+      steps.push({ step: 'phased-release', status: 'skipped', detail: 'Phased release not requested.' });
+    } else {
+      const existing = await release.getPhasedRelease(version.id, ctx.signal);
+      if (existing) {
+        steps.push({ step: 'phased-release', status: 'skipped', detail: 'Phased release already configured.' });
+      } else {
+        await release.createPhasedRelease(version.id, ctx.signal);
+        steps.push({ step: 'phased-release', status: 'done', detail: 'Phased release enabled.' });
+      }
+    }
+
+    const failed = steps.some((s) => s.status === 'failed');
+    const result = jsonResult({ versionId: version.id, versionString, steps });
+    return failed ? { ...result, isError: true } : result;
   },
 });
