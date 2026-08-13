@@ -18,15 +18,14 @@
  */
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { request } from 'undici';
 import type { Logger } from '../observability/logger.js';
 import type { AscTokenProvider } from './token-provider.js';
+import { AscHttp } from './http.js';
 import {
   AscApiError,
   type AppAttributes,
   type AppSummary,
-  type AscErrorBody,
   type AscListResponse,
   type AscSingleResponse,
   type BuildAttributes,
@@ -45,8 +44,6 @@ const RESOURCE_TYPE: Record<FeedbackKind, string> = {
 
 /** Server-side page size cap documented by Apple. */
 const MAX_PAGE_SIZE = 200;
-const MAX_RETRIES = 2;
-const MAX_RETRY_AFTER_MS = 10_000;
 
 export interface AscClientOptions {
   baseUrl: string;
@@ -55,14 +52,10 @@ export interface AscClientOptions {
 }
 
 export class AscClient {
-  private readonly baseUrl: string;
-  private readonly tokens: AscTokenProvider;
-  private readonly logger: Logger;
+  private readonly http: AscHttp;
 
   constructor(options: AscClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/$/, '');
-    this.tokens = options.tokenProvider;
-    this.logger = options.logger;
+    this.http = new AscHttp(options);
   }
 
   // -------------------------------------------------------------------------
@@ -194,59 +187,7 @@ export class AscClient {
   // -------------------------------------------------------------------------
 
   private async requestJson<T>(pathOrUrl: string, signal?: AbortSignal): Promise<T> {
-    const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${this.baseUrl}${pathOrUrl}`;
-
-    let attempt = 0;
-    let retried401 = false;
-    for (;;) {
-      const token = await this.tokens.getToken();
-      const response = await request(url, {
-        method: 'GET',
-        headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
-        headersTimeout: 15_000,
-        bodyTimeout: 30_000,
-        signal,
-      });
-
-      if (response.statusCode < 400) {
-        return (await response.body.json()) as T;
-      }
-
-      const errorBody = (await response.body.json().catch(() => ({}))) as AscErrorBody;
-      const detail = errorBody.errors
-        ?.map((e) => e.detail ?? e.title)
-        .filter(Boolean)
-        .join('; ');
-
-      // Expired/rotated token: mint a fresh one and retry exactly once.
-      if (response.statusCode === 401 && !retried401) {
-        retried401 = true;
-        this.tokens.invalidate();
-        this.logger.debug({ url }, 'ASC 401 — refreshing token and retrying');
-        continue;
-      }
-
-      const retryable = response.statusCode === 429 || response.statusCode >= 500;
-      if (retryable && attempt < MAX_RETRIES) {
-        attempt += 1;
-        const retryAfterHeader = Number(response.headers['retry-after']);
-        const delayMs = Number.isFinite(retryAfterHeader)
-          ? Math.min(retryAfterHeader * 1000, MAX_RETRY_AFTER_MS)
-          : 500 * attempt;
-        this.logger.warn(
-          { status: response.statusCode, attempt, delayMs },
-          'ASC request rate-limited or failed upstream — retrying',
-        );
-        await sleep(delayMs, undefined, { signal });
-        continue;
-      }
-
-      throw new AscApiError(
-        detail ?? `App Store Connect API returned HTTP ${response.statusCode}`,
-        response.statusCode,
-        errorBody.errors?.[0]?.code,
-      );
-    }
+    return this.http.request<T>('GET', pathOrUrl, { signal });
   }
 }
 
