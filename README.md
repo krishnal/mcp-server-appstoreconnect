@@ -169,7 +169,7 @@ Requires **Node.js ≥ 24** (`nvm use` picks up `.nvmrc`; `node:sqlite` ships wi
 npm install
 cp .env.example .env    # fill in the ASC_* credentials
 npm run dev:stdio       # stdio transport — or `npm run dev` for HTTP
-npm test                # 179 tests
+npm test                # 181 tests
 
 # hook a source checkout into Claude Code:
 npm run build
@@ -294,7 +294,7 @@ export const myTool = defineTool({
 ## Testing
 
 ```bash
-npm test              # 179 tests: unit + protocol-level + transport integration
+npm test              # 181 tests: unit + protocol-level + transport integration
 npm run coverage
 npm run typecheck
 ```
