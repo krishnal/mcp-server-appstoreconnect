@@ -11,6 +11,7 @@
 import type { CapabilityRegistry } from '../core/registry/capability-registry.js';
 import { triageFeedbackPrompt } from './prompts/triage-feedback.js';
 import { feedbackResourceTemplate } from './resources/feedback.js';
+import { auditAppReviewTool } from './tools/audit.js';
 import { analyzeFeedbackTool, saveAnalysisTool } from './tools/analyze.js';
 import { listAppsTool } from './tools/apps.js';
 import {
@@ -58,6 +59,8 @@ export function registerAllCapabilities(registry: CapabilityRegistry): void {
     .registerTool(distributeBuildTool)
     .registerTool(submitForReviewTool)
     .registerTool(releaseVersionTool)
+    // Review audit
+    .registerTool(auditAppReviewTool)
     // Resources & prompts
     .registerResourceTemplate(feedbackResourceTemplate)
     .registerPrompt(triageFeedbackPrompt);
