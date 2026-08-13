@@ -8,6 +8,7 @@
 import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AscClient } from '../../asc/client.js';
+import type { AscReleaseClient } from '../../asc/release-client.js';
 import { AscApiError, type FeedbackKind } from '../../asc/types.js';
 import type { AnalyzerImage } from '../../analysis/analyzer.js';
 import { analysisSchema, type FeedbackAnalysis } from '../../analysis/schema.js';
@@ -31,6 +32,12 @@ export function requireAsc(ctx: CapabilityContext): AscClient {
   const asc = ctx.services.asc;
   if (!asc) throw new Error(ASC_NOT_CONFIGURED);
   return asc;
+}
+
+export function requireRelease(ctx: CapabilityContext): AscReleaseClient {
+  const release = ctx.services.release;
+  if (!release) throw new Error(ASC_NOT_CONFIGURED);
+  return release;
 }
 
 /** Resolve the app to operate on: explicit argument, else ASC_APP_ID. */

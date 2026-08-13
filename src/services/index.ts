@@ -10,6 +10,7 @@
  * LLM can relay to the user.
  */
 import { AscClient } from '../asc/client.js';
+import { AscReleaseClient } from '../asc/release-client.js';
 import { AscTokenProvider, resolvePrivateKeyPem } from '../asc/token-provider.js';
 import { FeedbackAnalyzer } from '../analysis/analyzer.js';
 import type { AppConfig } from '../config/index.js';
@@ -22,6 +23,8 @@ export interface Services {
   readonly store: FeedbackStore;
   /** Undefined until App Store Connect credentials are configured. */
   readonly asc: AscClient | undefined;
+  /** Release-pipeline client; undefined until ASC credentials are configured. */
+  readonly release: AscReleaseClient | undefined;
   readonly analyzer: FeedbackAnalyzer;
   readonly issueProviders: ReadonlyMap<string, IssueProvider>;
   dispose(): void;
@@ -30,12 +33,12 @@ export interface Services {
 export function createServices(config: AppConfig, logger: Logger): Services {
   const store = new FeedbackStore(config.paths.dbPath);
 
-  const asc = config.asc
-    ? new AscClient({
-        baseUrl: config.ascBaseUrl,
-        tokenProvider: new LazyTokenProvider(config.asc),
-        logger,
-      })
+  const tokenProvider = config.asc ? new LazyTokenProvider(config.asc) : undefined;
+  const asc = tokenProvider
+    ? new AscClient({ baseUrl: config.ascBaseUrl, tokenProvider, logger })
+    : undefined;
+  const release = tokenProvider
+    ? new AscReleaseClient({ baseUrl: config.ascBaseUrl, tokenProvider, logger })
     : undefined;
 
   const analyzer = new FeedbackAnalyzer({
@@ -47,6 +50,7 @@ export function createServices(config: AppConfig, logger: Logger): Services {
   return {
     store,
     asc,
+    release,
     analyzer,
     issueProviders: createIssueProviders(config),
     dispose: () => store.close(),
