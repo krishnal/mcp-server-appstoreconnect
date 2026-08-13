@@ -263,6 +263,17 @@ describe('write surface', () => {
     });
   });
 
+  it('updateVersion PATCHes the release type', async () => {
+    const captured = captureBody('/v1/appStoreVersions/v-9', 'PATCH', 200, {
+      type: 'appStoreVersions',
+      id: 'v-9',
+    });
+    await client.updateVersion('v-9', { releaseType: 'MANUAL' });
+    expect(captured.body).toEqual({
+      data: { type: 'appStoreVersions', id: 'v-9', attributes: { releaseType: 'MANUAL' } },
+    });
+  });
+
   it('setVersionBuild PATCHes the build relationship', async () => {
     const captured = captureBody('/v1/appStoreVersions/v-9/relationships/build', 'PATCH', 204, undefined);
     await client.setVersionBuild('v-9', 'build-2');
