@@ -89,8 +89,11 @@ export const checkSubmissionReadinessTool = defineTool({
 });
 
 const releaseTypeSchema = z
-  .enum(['AFTER_APPROVAL', 'MANUAL', 'SCHEDULED'])
-  .describe('How the version goes live after approval (default AFTER_APPROVAL)');
+  .enum(['AFTER_APPROVAL', 'MANUAL'])
+  .describe(
+    'How the version goes live after approval: AFTER_APPROVAL releases immediately, MANUAL holds ' +
+      'for release_version (default AFTER_APPROVAL)',
+  );
 
 export const prepareAppStoreVersionTool = defineTool({
   name: 'prepare_app_store_version',
