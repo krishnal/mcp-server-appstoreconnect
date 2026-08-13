@@ -22,6 +22,7 @@ import {
   markUnprocessedTool,
 } from './tools/feedback.js';
 import { createIssueTool } from './tools/issues.js';
+import { getReleaseStatusTool, listBuildsTool } from './tools/release.js';
 import { downloadScreenshotTool } from './tools/screenshots.js';
 import {
   generateTodoTool,
@@ -49,6 +50,9 @@ export function registerAllCapabilities(registry: CapabilityRegistry): void {
     .registerTool(prioritizeFeedbackTool)
     // Integrations
     .registerTool(createIssueTool)
+    // Release pipeline
+    .registerTool(listBuildsTool)
+    .registerTool(getReleaseStatusTool)
     // Resources & prompts
     .registerResourceTemplate(feedbackResourceTemplate)
     .registerPrompt(triageFeedbackPrompt);
