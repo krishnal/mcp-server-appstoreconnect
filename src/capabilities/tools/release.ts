@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import { defineTool } from '../../core/registry/define.js';
 import type { AppStoreVersionSummary } from '../../asc/types.js';
+import { AscApiError } from '../../asc/types.js';
 import { buildReadinessReport, gatherReadinessFacts, EDITABLE_STATES } from '../../asc/readiness.js';
 import { jsonResult, requireRelease, resolveAppId } from './shared.js';
 
@@ -277,5 +278,110 @@ export const distributeBuildTool = defineTool({
     const failed = steps.some((s) => s.status === 'failed');
     const result = jsonResult({ buildId, steps });
     return failed ? { ...result, isError: true } : result;
+  },
+});
+
+/** Review-submission states that mean "already in Apple's queue". */
+const SUBMISSION_IN_FLIGHT_STATES = ['WAITING_FOR_REVIEW', 'IN_REVIEW', 'UNRESOLVED_ISSUES'];
+
+export const submitForReviewTool = defineTool({
+  name: 'submit_for_review',
+  title: 'Submit for App Store review',
+  description:
+    'Submits the prepared App Store version to Apple review. Runs check_submission_readiness first ' +
+    'and refuses (returning the failing checks) unless force:true. Reuses an existing unsubmitted ' +
+    'review submission when present.',
+  inputSchema: z.object({
+    appId: z.string().optional().describe('App Store Connect app id (defaults to ASC_APP_ID)'),
+    platform: z.string().optional().describe('Platform (default "IOS")'),
+    force: z.boolean().optional().describe('Submit even if readiness checks fail (default false)'),
+  }),
+  annotations: { readOnlyHint: false, openWorldHint: true },
+  handler: async ({ appId, platform, force }, ctx) => {
+    const release = requireRelease(ctx);
+    const resolved = resolveAppId(appId, ctx);
+    const targetPlatform = platform ?? 'IOS';
+
+    const facts = await gatherReadinessFacts(release, resolved, targetPlatform, ctx.signal);
+    const report = buildReadinessReport(facts);
+    if (!report.ready && !force) {
+      return {
+        ...jsonResult({
+          submitted: false,
+          reason: 'Readiness checks are failing. Fix them (or pass force:true to submit anyway).',
+          report,
+        }),
+        isError: true,
+      };
+    }
+    if (!report.versionId) {
+      throw new Error('No editable App Store version to submit. Create one with prepare_app_store_version.');
+    }
+
+    const existing = await release.listReviewSubmissions(resolved, { limit: 10 }, ctx.signal);
+    const inFlight = existing.find((s) => s.state && SUBMISSION_IN_FLIGHT_STATES.includes(s.state));
+    if (inFlight) {
+      throw new Error(
+        `A review submission is already ${inFlight.state}. Track it with get_release_status; ` +
+          'cancel it in App Store Connect if you need to restart.',
+      );
+    }
+
+    const steps: StepOutcome[] = [];
+    let submission = existing.find((s) => s.state === 'READY_FOR_REVIEW');
+    if (submission) {
+      steps.push({ step: 'create-submission', status: 'skipped', detail: `Reusing ${submission.id}.` });
+    } else {
+      submission = await release.createReviewSubmission(resolved, targetPlatform, ctx.signal);
+      steps.push({ step: 'create-submission', status: 'done', detail: submission.id });
+    }
+
+    try {
+      await release.addReviewSubmissionItem(submission.id, report.versionId, ctx.signal);
+      steps.push({ step: 'add-item', status: 'done', detail: `Version ${report.versionString ?? report.versionId}.` });
+    } catch (err) {
+      // Apple 409s when the version is already an item of this submission — that is resume, not failure.
+      if (err instanceof AscApiError && err.status === 409) {
+        steps.push({ step: 'add-item', status: 'skipped', detail: 'Version already in the submission.' });
+      } else {
+        throw err;
+      }
+    }
+
+    const submitted = await release.submitReviewSubmission(submission.id, ctx.signal);
+    steps.push({ step: 'submit', status: 'done', detail: `State: ${submitted.state ?? 'submitted'}.` });
+
+    return jsonResult({
+      submitted: true,
+      reviewSubmissionId: submission.id,
+      versionId: report.versionId,
+      forced: Boolean(force && !report.ready),
+      steps,
+    });
+  },
+});
+
+export const releaseVersionTool = defineTool({
+  name: 'release_version',
+  title: 'Release approved version',
+  description:
+    'Releases an approved, manually-held App Store version (state PENDING_DEVELOPER_RELEASE) to ' +
+    'production. Only needed when the version was prepared with releaseType MANUAL.',
+  inputSchema: z.object({
+    appId: z.string().optional().describe('App Store Connect app id (defaults to ASC_APP_ID)'),
+  }),
+  annotations: { readOnlyHint: false, openWorldHint: true },
+  handler: async ({ appId }, ctx) => {
+    const release = requireRelease(ctx);
+    const versions = await release.listVersions(resolveAppId(appId, ctx), { limit: 10 }, ctx.signal);
+    const pending = versions.find((v) => v.state === 'PENDING_DEVELOPER_RELEASE');
+    if (!pending) {
+      throw new Error(
+        'No version in state PENDING_DEVELOPER_RELEASE. Check get_release_status — the version may ' +
+          'still be in review, or was prepared with releaseType AFTER_APPROVAL.',
+      );
+    }
+    await release.createReleaseRequest(pending.id, ctx.signal);
+    return jsonResult({ released: { versionId: pending.id, versionString: pending.versionString } });
   },
 });

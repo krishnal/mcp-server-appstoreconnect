@@ -255,3 +255,82 @@ describe('distribute_build', () => {
     expect(fake.calls).not.toContain('submitForBetaReview:build-2');
   });
 });
+
+function readyFake(): FakeRelease {
+  return emptyFakeRelease({
+    versions: [{ id: 'v-1', versionString: '2.4.0', state: 'PREPARE_FOR_SUBMISSION', buildId: 'build-2', buildVersion: '422' }],
+    builds: [{ id: 'build-2', version: '422', processingState: 'VALID', expired: false, usesNonExemptEncryption: false }],
+    localizations: new Map([['v-1', [{ id: 'loc-1', locale: 'en-US', description: 'A great app.', whatsNew: 'Fixes.' }]]]),
+    screenshotSets: new Map([['loc-1', [{ id: 'set-1', displayType: 'APP_IPHONE_67', screenshotCount: 3 }]]]),
+    reviewDetails: new Map([['v-1', { id: 'rd-1', contactEmail: 'dev@example.com' }]]),
+    appInfo: { appInfoId: 'info-1', privacyPolicyUrl: 'https://example.com/p', ageRating: { declared: true } },
+  });
+}
+
+describe('submit_for_review', () => {
+  it('refuses with the failing checks when not ready', async () => {
+    const { client } = await setupRelease(emptyFakeRelease());
+    const result = await call(client, 'submit_for_review', {});
+    expect(result.isError).toBe(true);
+    const parsed = json(result);
+    expect(parsed.submitted).toBe(false);
+    expect(parsed.report.checks.some((c: { status: string }) => c.status === 'fail')).toBe(true);
+  });
+
+  it('submits when ready: create submission, add item, submit', async () => {
+    const fake = readyFake();
+    const { client } = await setupRelease(fake);
+    const result = json(await call(client, 'submit_for_review', {}));
+    expect(result.submitted).toBe(true);
+    expect(result.reviewSubmissionId).toBe('rs-1');
+    expect(fake.calls).toContain('createReviewSubmission:IOS');
+    expect(fake.calls).toContain('addReviewSubmissionItem:rs-1:v-1');
+    expect(fake.calls).toContain('submitReviewSubmission:rs-1');
+  });
+
+  it('force bypasses a failing readiness report', async () => {
+    const fake = readyFake();
+    fake.appInfo = { appInfoId: 'info-1', ageRating: { declared: false } }; // privacy + age rating now fail
+    const { client } = await setupRelease(fake);
+    const result = json(await call(client, 'submit_for_review', { force: true }));
+    expect(result.submitted).toBe(true);
+  });
+
+  it('points at get_release_status when a submission is already in flight', async () => {
+    const fake = readyFake();
+    fake.reviewSubmissions = [{ id: 'rs-0', state: 'WAITING_FOR_REVIEW', platform: 'IOS' }];
+    const { client } = await setupRelease(fake);
+    const result = await call(client, 'submit_for_review', {});
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toMatch(/get_release_status/);
+  });
+
+  it('reuses an existing unsubmitted submission instead of creating another', async () => {
+    const fake = readyFake();
+    fake.reviewSubmissions = [{ id: 'rs-0', state: 'READY_FOR_REVIEW', platform: 'IOS' }];
+    const { client } = await setupRelease(fake);
+    const result = json(await call(client, 'submit_for_review', {}));
+    expect(result.reviewSubmissionId).toBe('rs-0');
+    expect(fake.calls).not.toContain('createReviewSubmission:IOS');
+    expect(fake.calls).toContain('submitReviewSubmission:rs-0');
+  });
+});
+
+describe('release_version', () => {
+  it('releases a version pending developer release', async () => {
+    const fake = emptyFakeRelease({
+      versions: [{ id: 'v-1', versionString: '2.4.0', state: 'PENDING_DEVELOPER_RELEASE' }],
+    });
+    const { client } = await setupRelease(fake);
+    const result = json(await call(client, 'release_version', {}));
+    expect(result.released).toMatchObject({ versionId: 'v-1', versionString: '2.4.0' });
+    expect(fake.calls).toContain('createReleaseRequest:v-1');
+  });
+
+  it('errors when nothing is pending release', async () => {
+    const { client } = await setupRelease(emptyFakeRelease());
+    const result = await call(client, 'release_version', {});
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toMatch(/PENDING_DEVELOPER_RELEASE/);
+  });
+});
