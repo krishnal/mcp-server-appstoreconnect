@@ -30,6 +30,7 @@ import {
   type BuildSummary,
   type PhasedReleaseAttributes,
   type PhasedReleaseSummary,
+  type ReleaseType,
   type ReviewDetailAttributes,
   type ReviewDetailSummary,
   type ReviewSubmissionAttributes,
@@ -283,6 +284,192 @@ export class AscReleaseClient {
         { signal },
       );
       return { id: body.data.id, ...body.data.attributes };
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Writes — require an API key with the App Manager role
+  // -------------------------------------------------------------------------
+
+  async createVersion(
+    appId: string,
+    attrs: { versionString: string; platform: string; releaseType: ReleaseType },
+    signal?: AbortSignal,
+  ): Promise<AppStoreVersionSummary> {
+    const body = await this.http.request<AscSingleResponse<AppStoreVersionAttributes>>(
+      'POST',
+      '/v1/appStoreVersions',
+      {
+        body: {
+          data: {
+            type: 'appStoreVersions',
+            attributes: attrs,
+            relationships: { app: { data: { type: 'apps', id: appId } } },
+          },
+        },
+        signal,
+      },
+    );
+    const a = body.data.attributes ?? {};
+    return {
+      id: body.data.id,
+      versionString: a.versionString,
+      state: a.appVersionState ?? a.appStoreState,
+      releaseType: a.releaseType,
+      platform: a.platform,
+    };
+  }
+
+  async updateVersion(
+    versionId: string,
+    attrs: { releaseType?: ReleaseType },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.http.request('PATCH', `/v1/appStoreVersions/${encodeURIComponent(versionId)}`, {
+      body: { data: { type: 'appStoreVersions', id: versionId, attributes: attrs } },
+      signal,
+    });
+  }
+
+  async setVersionBuild(versionId: string, buildId: string, signal?: AbortSignal): Promise<void> {
+    await this.http.request(
+      'PATCH',
+      `/v1/appStoreVersions/${encodeURIComponent(versionId)}/relationships/build`,
+      { body: { data: { type: 'builds', id: buildId } }, signal },
+    );
+  }
+
+  async updateLocalization(
+    localizationId: string,
+    attrs: { whatsNew?: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.http.request(
+      'PATCH',
+      `/v1/appStoreVersionLocalizations/${encodeURIComponent(localizationId)}`,
+      {
+        body: { data: { type: 'appStoreVersionLocalizations', id: localizationId, attributes: attrs } },
+        signal,
+      },
+    );
+  }
+
+  async createPhasedRelease(versionId: string, signal?: AbortSignal): Promise<PhasedReleaseSummary> {
+    const body = await this.http.request<AscSingleResponse<PhasedReleaseAttributes>>(
+      'POST',
+      '/v1/appStoreVersionPhasedReleases',
+      {
+        body: {
+          data: {
+            type: 'appStoreVersionPhasedReleases',
+            relationships: { appStoreVersion: { data: { type: 'appStoreVersions', id: versionId } } },
+          },
+        },
+        signal,
+      },
+    );
+    return { id: body.data.id, ...body.data.attributes };
+  }
+
+  async createReviewSubmission(
+    appId: string,
+    platform: string,
+    signal?: AbortSignal,
+  ): Promise<ReviewSubmissionSummary> {
+    const body = await this.http.request<AscSingleResponse<ReviewSubmissionAttributes>>(
+      'POST',
+      '/v1/reviewSubmissions',
+      {
+        body: {
+          data: {
+            type: 'reviewSubmissions',
+            attributes: { platform },
+            relationships: { app: { data: { type: 'apps', id: appId } } },
+          },
+        },
+        signal,
+      },
+    );
+    return { id: body.data.id, ...body.data.attributes };
+  }
+
+  async addReviewSubmissionItem(
+    submissionId: string,
+    versionId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.http.request('POST', '/v1/reviewSubmissionItems', {
+      body: {
+        data: {
+          type: 'reviewSubmissionItems',
+          relationships: {
+            reviewSubmission: { data: { type: 'reviewSubmissions', id: submissionId } },
+            appStoreVersion: { data: { type: 'appStoreVersions', id: versionId } },
+          },
+        },
+      },
+      signal,
+    });
+  }
+
+  async submitReviewSubmission(
+    submissionId: string,
+    signal?: AbortSignal,
+  ): Promise<ReviewSubmissionSummary> {
+    const body = await this.http.request<AscSingleResponse<ReviewSubmissionAttributes>>(
+      'PATCH',
+      `/v1/reviewSubmissions/${encodeURIComponent(submissionId)}`,
+      {
+        body: { data: { type: 'reviewSubmissions', id: submissionId, attributes: { submitted: true } } },
+        signal,
+      },
+    );
+    return { id: body.data.id, ...body.data.attributes };
+  }
+
+  async createReleaseRequest(versionId: string, signal?: AbortSignal): Promise<void> {
+    await this.http.request('POST', '/v1/appStoreVersionReleaseRequests', {
+      body: {
+        data: {
+          type: 'appStoreVersionReleaseRequests',
+          relationships: { appStoreVersion: { data: { type: 'appStoreVersions', id: versionId } } },
+        },
+      },
+      signal,
+    });
+  }
+
+  async setExportCompliance(
+    buildId: string,
+    usesNonExemptEncryption: boolean,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.http.request('PATCH', `/v1/builds/${encodeURIComponent(buildId)}`, {
+      body: { data: { type: 'builds', id: buildId, attributes: { usesNonExemptEncryption } } },
+      signal,
+    });
+  }
+
+  async submitForBetaReview(buildId: string, signal?: AbortSignal): Promise<void> {
+    await this.http.request('POST', '/v1/betaAppReviewSubmissions', {
+      body: {
+        data: {
+          type: 'betaAppReviewSubmissions',
+          relationships: { build: { data: { type: 'builds', id: buildId } } },
+        },
+      },
+      signal,
+    });
+  }
+
+  async addBuildToBetaGroups(
+    buildId: string,
+    groupIds: string[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.http.request('POST', `/v1/builds/${encodeURIComponent(buildId)}/relationships/betaGroups`, {
+      body: { data: groupIds.map((id) => ({ type: 'betaGroups', id })) },
+      signal,
     });
   }
 

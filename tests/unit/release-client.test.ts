@@ -224,3 +224,165 @@ describe('read surface', () => {
     ]);
   });
 });
+
+describe('write surface', () => {
+  function captureBody(path: string | RegExp, method: 'POST' | 'PATCH', statusCode: number, data: unknown) {
+    const captured: { body?: unknown } = {};
+    pool()
+      .intercept({
+        path,
+        method,
+        body: (b) => {
+          captured.body = JSON.parse(b);
+          return true;
+        },
+      })
+      .reply(statusCode, data === undefined ? '' : { data });
+    return captured;
+  }
+
+  it('createVersion posts the JSON:API document and returns a summary', async () => {
+    const captured = captureBody('/v1/appStoreVersions', 'POST', 201, {
+      type: 'appStoreVersions',
+      id: 'v-9',
+      attributes: { versionString: '2.4.0', appVersionState: 'PREPARE_FOR_SUBMISSION', releaseType: 'MANUAL' },
+    });
+
+    const version = await client.createVersion('app-1', {
+      versionString: '2.4.0',
+      platform: 'IOS',
+      releaseType: 'MANUAL',
+    });
+    expect(version).toMatchObject({ id: 'v-9', versionString: '2.4.0', state: 'PREPARE_FOR_SUBMISSION' });
+    expect(captured.body).toEqual({
+      data: {
+        type: 'appStoreVersions',
+        attributes: { versionString: '2.4.0', platform: 'IOS', releaseType: 'MANUAL' },
+        relationships: { app: { data: { type: 'apps', id: 'app-1' } } },
+      },
+    });
+  });
+
+  it('setVersionBuild PATCHes the build relationship', async () => {
+    const captured = captureBody('/v1/appStoreVersions/v-9/relationships/build', 'PATCH', 204, undefined);
+    await client.setVersionBuild('v-9', 'build-2');
+    expect(captured.body).toEqual({ data: { type: 'builds', id: 'build-2' } });
+  });
+
+  it('updateLocalization PATCHes whatsNew', async () => {
+    const captured = captureBody('/v1/appStoreVersionLocalizations/loc-1', 'PATCH', 200, {
+      type: 'appStoreVersionLocalizations',
+      id: 'loc-1',
+    });
+    await client.updateLocalization('loc-1', { whatsNew: 'Bug fixes.' });
+    expect(captured.body).toEqual({
+      data: { type: 'appStoreVersionLocalizations', id: 'loc-1', attributes: { whatsNew: 'Bug fixes.' } },
+    });
+  });
+
+  it('review submission lifecycle: create, add item, submit', async () => {
+    const create = captureBody('/v1/reviewSubmissions', 'POST', 201, {
+      type: 'reviewSubmissions',
+      id: 'rs-9',
+      attributes: { state: 'READY_FOR_REVIEW', platform: 'IOS' },
+    });
+    const item = captureBody('/v1/reviewSubmissionItems', 'POST', 201, {
+      type: 'reviewSubmissionItems',
+      id: 'item-1',
+    });
+    const submit = captureBody('/v1/reviewSubmissions/rs-9', 'PATCH', 200, {
+      type: 'reviewSubmissions',
+      id: 'rs-9',
+      attributes: { state: 'WAITING_FOR_REVIEW' },
+    });
+
+    const submission = await client.createReviewSubmission('app-1', 'IOS');
+    expect(submission).toMatchObject({ id: 'rs-9', state: 'READY_FOR_REVIEW' });
+    expect(create.body).toEqual({
+      data: {
+        type: 'reviewSubmissions',
+        attributes: { platform: 'IOS' },
+        relationships: { app: { data: { type: 'apps', id: 'app-1' } } },
+      },
+    });
+
+    await client.addReviewSubmissionItem('rs-9', 'v-9');
+    expect(item.body).toEqual({
+      data: {
+        type: 'reviewSubmissionItems',
+        relationships: {
+          reviewSubmission: { data: { type: 'reviewSubmissions', id: 'rs-9' } },
+          appStoreVersion: { data: { type: 'appStoreVersions', id: 'v-9' } },
+        },
+      },
+    });
+
+    const submitted = await client.submitReviewSubmission('rs-9');
+    expect(submitted.state).toBe('WAITING_FOR_REVIEW');
+    expect(submit.body).toEqual({
+      data: { type: 'reviewSubmissions', id: 'rs-9', attributes: { submitted: true } },
+    });
+  });
+
+  it('setExportCompliance PATCHes the build attribute', async () => {
+    const captured = captureBody('/v1/builds/build-2', 'PATCH', 200, { type: 'builds', id: 'build-2' });
+    await client.setExportCompliance('build-2', false);
+    expect(captured.body).toEqual({
+      data: { type: 'builds', id: 'build-2', attributes: { usesNonExemptEncryption: false } },
+    });
+  });
+
+  it('submitForBetaReview and addBuildToBetaGroups post relationships', async () => {
+    const beta = captureBody('/v1/betaAppReviewSubmissions', 'POST', 201, {
+      type: 'betaAppReviewSubmissions',
+      id: 'bars-1',
+    });
+    const groups = captureBody('/v1/builds/build-2/relationships/betaGroups', 'POST', 204, undefined);
+
+    await client.submitForBetaReview('build-2');
+    expect(beta.body).toEqual({
+      data: {
+        type: 'betaAppReviewSubmissions',
+        relationships: { build: { data: { type: 'builds', id: 'build-2' } } },
+      },
+    });
+
+    await client.addBuildToBetaGroups('build-2', ['g-1', 'g-2']);
+    expect(groups.body).toEqual({
+      data: [
+        { type: 'betaGroups', id: 'g-1' },
+        { type: 'betaGroups', id: 'g-2' },
+      ],
+    });
+  });
+
+  it('createReleaseRequest posts the version relationship', async () => {
+    const captured = captureBody('/v1/appStoreVersionReleaseRequests', 'POST', 201, {
+      type: 'appStoreVersionReleaseRequests',
+      id: 'rr-1',
+    });
+    await client.createReleaseRequest('v-9');
+    expect(captured.body).toEqual({
+      data: {
+        type: 'appStoreVersionReleaseRequests',
+        relationships: { appStoreVersion: { data: { type: 'appStoreVersions', id: 'v-9' } } },
+      },
+    });
+  });
+
+  it('createPhasedRelease posts the version relationship and returns state', async () => {
+    const captured = captureBody('/v1/appStoreVersionPhasedReleases', 'POST', 201, {
+      type: 'appStoreVersionPhasedReleases',
+      id: 'pr-1',
+      attributes: { phasedReleaseState: 'INACTIVE' },
+    });
+    const phased = await client.createPhasedRelease('v-9');
+    expect(phased).toMatchObject({ id: 'pr-1', phasedReleaseState: 'INACTIVE' });
+    expect(captured.body).toEqual({
+      data: {
+        type: 'appStoreVersionPhasedReleases',
+        relationships: { appStoreVersion: { data: { type: 'appStoreVersions', id: 'v-9' } } },
+      },
+    });
+  });
+});
