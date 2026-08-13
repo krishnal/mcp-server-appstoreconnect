@@ -139,4 +139,42 @@ describe('write methods', () => {
       .catch((e: unknown) => e)) as Error;
     expect(error.message).toMatch(/App Manager role/);
   });
+
+  it('does not retry a POST on 500 — surfaces the error immediately', async () => {
+    agent
+      .get(BASE)
+      .intercept({ path: '/v1/things', method: 'POST' })
+      .reply(500, { errors: [{ status: '500', detail: 'Internal error' }] });
+
+    const error = (await http
+      .request('POST', '/v1/things', { body: { data: {} } })
+      .then(
+        () => {
+          throw new Error('expected rejection');
+        },
+        (e: unknown) => e,
+      )) as unknown as AscApiError;
+    expect(error).toBeInstanceOf(AscApiError);
+    expect(error).toMatchObject({ status: 500 });
+    // A retry would consume a second interceptor that was never registered — if the request had
+    // been retried, undici would throw a MockNotMatchedError here instead of resolving with the
+    // AscApiError above. Confirming no interceptors are left pending shows exactly one was used.
+    agent.assertNoPendingInterceptors();
+  });
+});
+
+describe('retry behavior on GET', () => {
+  it('retries a GET on 500 and succeeds on the following 200', async () => {
+    agent
+      .get(BASE)
+      .intercept({ path: '/v1/things', method: 'GET' })
+      .reply(500, { errors: [{ status: '500', detail: 'Internal error' }] });
+    agent
+      .get(BASE)
+      .intercept({ path: '/v1/things', method: 'GET' })
+      .reply(200, { data: { type: 'things', id: 'thing-1' } });
+
+    const result = await http.request<{ data: { id: string } }>('GET', '/v1/things');
+    expect(result.data.id).toBe('thing-1');
+  });
 });

@@ -3,8 +3,9 @@
  *
  * Owns auth and reliability for every ASC call, read or write:
  *  - 401 → invalidate the cached JWT and retry once (key/token rotation)
- *  - 429 → honor Retry-After (bounded), bounded retries
- *  - 5xx → single retry with short backoff
+ *  - 429 → honor Retry-After (bounded), bounded retries, any method
+ *  - 5xx → bounded retries, GET only (POST/PATCH/DELETE are not retried — a 5xx after a
+ *    committed write may have already applied, and retrying could duplicate it)
  * Errors surface as typed {@link AscApiError} with Apple's `detail` message so
  * the calling LLM can self-correct. 204 / empty 2xx responses resolve to
  * `undefined` (relationship PATCHes and deletes have no body).
@@ -84,7 +85,9 @@ export class AscHttp {
         continue;
       }
 
-      const retryable = response.statusCode === 429 || response.statusCode >= 500;
+      // 5xx after a committed write (POST/PATCH/DELETE) may mean the write already landed —
+      // retrying it could duplicate a create or mutate twice. Only GETs are safe to retry on 5xx.
+      const retryable = response.statusCode === 429 || (method === 'GET' && response.statusCode >= 500);
       if (retryable && attempt < MAX_RETRIES) {
         attempt += 1;
         const retryAfterHeader = Number(response.headers['retry-after']);
